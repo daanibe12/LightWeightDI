@@ -44,13 +44,13 @@ end
 
 ```
 
-- How to DependencyInject
+- Example of Dependent Injection
   
 `@Autowired var repository: ARepository`
 
 `@Autowired var appObj: AppScopeProtocol`
 
 
-- example iOS apps project using clean architecture MVVM
+- iOS apps project using clean architecture MVVM
 
 [SampleLightWeightDI5.zip](https://github.com/daanibe12/LightWeightDI/files/15502655/SampleLightWeightDI5.zip)
