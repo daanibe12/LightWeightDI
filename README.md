@@ -51,6 +51,6 @@ end
 `@Autowired var appObj: AppScopeProtocol`
 
 
-- example mvvm project
+- example iOS apps using clean architecture MVVM
 
-[SampleLightWeightDI 2.zip](https://github.com/daanibe12/LightWeightDI/files/15472341/SampleLightWeightDI.2.zip)
+[SampleLightWeightDI5.zip](https://github.com/daanibe12/LightWeightDI/files/15502655/SampleLightWeightDI5.zip)
