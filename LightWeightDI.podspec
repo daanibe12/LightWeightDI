@@ -1,6 +1,6 @@
 Pod::Spec.new do |spec|
   spec.name          = "LightWeightDI"
-  spec.version       = "0.2.1"
+  spec.version       = "0.2.2"
   spec.author        = { "ebina" => "ebina123jpjpjp@gmail.com" }
   spec.homepage      = "https://github.com/daanibe12/LightWeightDI"
   spec.license       = { :type => "MIT", :file => "LICENSE" }
