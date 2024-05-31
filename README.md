@@ -8,7 +8,9 @@
 ## About LightWeight DI
 - LightWeightDI provides DI functionality for iOS and MacOS app development.
 - This library internally references Swinject.
-- How to install
+- 
+## How to install
+
 ### How to install by Cocoapods (podfile)
 - CocoaPods is a dependency manager for Cocoa projects. For usage and installation instructions, visit their website. To integrate Alamofire into your Xcode project using CocoaPods, specify it in your Podfile:
 ```
