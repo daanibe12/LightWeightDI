@@ -23,7 +23,8 @@ end
 ```
 
 ### How to install by Swift Package Manager(Xcode menu)
-<img width="1056" alt="スクリーンショット 2024-05-24 3 55 26" src="https://github.com/daanibe12/LightWeightDI/assets/170229202/f97c02da-bfe6-44e0-9be2-8c6ddd7e1ac4">
+<img width="1056" alt="スクリーンショット 2024-05-24 3 55 26" src="https://github.com/daanibe12/LightWeightDI/assets/170229202/fd7934fe-4a1d-4f9c-bd4f-fbce51641509">
+
 
 ### How to install by Swift Package Manager(Package.swift)
 - The Swift Package Manager is a tool for automating the distribution of Swift code and is integrated into the swift compiler.Once you have your Swift package set up, adding Alamofire as a dependency is as easy as adding it to the dependencies value of your Package.swift or the Package list in Xcode.
