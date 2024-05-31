@@ -32,7 +32,7 @@ dependencies: [
 ]
 ```
 
-- Usage:
+### Usage:
 - How to regist implementation object into containar
 ```
 // regist implementation object into containar (strong)
