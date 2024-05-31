@@ -8,7 +8,6 @@
 ## About LightWeight DI
 - LightWeightDI provides DI functionality for iOS and MacOS app development.
 - This library internally references Swinject.
-- 
 ## How to install
 
 ### How to install by Cocoapods (podfile)
