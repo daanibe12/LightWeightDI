@@ -34,8 +34,8 @@ dependencies: [
 ]
 ```
 
-### Usage:
-- How to regist implementation object into containar
+## Usage:
+### How to regist implementation object into containar
 ```
 // regist implementation object into containar (strong)
         DependencyResolver.shared.regist(AppScopeProtocol.self, scope: .container) { r in
@@ -53,13 +53,13 @@ dependencies: [
 
 ```
 
-- Example of Dependent Injection
+### Example of Dependent Injection
   
 `@Autowired var repository: ARepository`
 
 `@Autowired var appObj: AppScopeProtocol`
 
 
-- iOS apps project using clean architecture MVVM
+## iOS apps project using clean architecture MVVM
 
 [SampleLightWeightDI5.zip](https://github.com/daanibe12/LightWeightDI/files/15502655/SampleLightWeightDI5.zip)
