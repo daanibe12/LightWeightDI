@@ -2,7 +2,6 @@
 # LightWeightDI
 ![MacOS](https://img.shields.io/badge/MacOS-13+-green)
 ![ios](https://img.shields.io/badge/ios-16+-red)
-![tvOS](https://img.shields.io/badge/tvOS-16+-yellow)
 ![Cocoapods](https://img.shields.io/badge/Cocoapods-0.2.2-blue)
 [![Swift Package Manager compatible](https://img.shields.io/badge/Swift%20Package%20Manager-compatible-brightgreen.svg)](https://github.com/apple/swift-package-manager)
 
@@ -11,6 +10,7 @@
 - This library internally references Swinject.
 - How to install
 ### How to install by Cocoapods (podfile)
+- CocoaPods is a dependency manager for Cocoa projects. For usage and installation instructions, visit their website. To integrate Alamofire into your Xcode project using CocoaPods, specify it in your Podfile:
 ```
 use_frameworks!
 target 'cocoapodssample' do
@@ -23,7 +23,14 @@ end
 ### How to install by Swift Package Manager(Xcode menu)
 <img width="1056" alt="スクリーンショット 2024-05-24 3 55 26" src="https://github.com/daanibe12/LightWeightDI/assets/170229202/f97c02da-bfe6-44e0-9be2-8c6ddd7e1ac4">
 
+### How to install by Swift Package Manager(Package.swift)
+- The Swift Package Manager is a tool for automating the distribution of Swift code and is integrated into the swift compiler.Once you have your Swift package set up, adding Alamofire as a dependency is as easy as adding it to the dependencies value of your Package.swift or the Package list in Xcode.
 
+```
+dependencies: [
+    .package(url: "https://github.com/daanibe12/LightWeightDI.git", .upToNextMajor(from: "0.2.2"))
+]
+```
 
 - Usage:
 - How to regist implementation object into containar
