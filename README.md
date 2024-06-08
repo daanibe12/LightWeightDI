@@ -62,4 +62,4 @@ dependencies: [
 
 ## iOS apps project using clean architecture MVVM
 
-[SampleLightWeightDI5.zip](https://github.com/daanibe12/LightWeightDI/files/15502655/SampleLightWeightDI5.zip)
+[SampleLightWeightDI6.zip](https://github.com/user-attachments/files/15747107/SampleLightWeightDI6.zip)
