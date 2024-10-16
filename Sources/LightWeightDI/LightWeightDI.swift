@@ -2,6 +2,7 @@
 // https://docs.swift.org/swift-book
 import SwiftUI
 import Swinject
+import FirebaseAnalytics
 
 
 public class DependencyResolver {
@@ -14,10 +15,12 @@ public class DependencyResolver {
         guard let resolveValue = container.resolve(T.self) else {
             fatalError("can not resolve")
         }
+        Analytics.logEvent("EV003", parameters: nil)
         return resolveValue
     }
     
     public func regist<T>(_ type: T.Type, scope: Swinject.ObjectScope = .weak, factory: @escaping (Swinject.Resolver) -> T) {
+        Analytics.logEvent("EV005", parameters: nil)
         container.register(type, factory: factory).inObjectScope(scope)
     }
 }
