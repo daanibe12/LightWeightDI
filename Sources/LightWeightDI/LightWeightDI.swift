@@ -8,7 +8,7 @@
 import Swinject
 import SwiftUI
 
-class AppContainer {
+public class AppContainer {
   static let appContainer = Container()
   public static func resolve<T>() -> T {
     guard let resolveValue = appContainer.resolve(T.self) else {
@@ -29,7 +29,7 @@ class AppContainer {
 
 
 
-class WeakContainer {
+public class WeakContainer {
   static let weakContainer = Container()
   public static func resolve<T>() -> T {
     guard let resolveValue = weakContainer.resolve(T.self) else {
