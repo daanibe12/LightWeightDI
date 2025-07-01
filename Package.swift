@@ -19,7 +19,7 @@ var targets: [Target] = [
 let package = Package(
     name: "LightWeightDI",
     platforms: [
-        .iOS(.v16),.macOS(.v13), .tvOS(.v16)
+        .iOS(.v15),.macOS(.v13), .tvOS(.v16)
     ],
     products: [
         .library(name: "LightWeightDI", targets: ["LightWeightDI"]),
