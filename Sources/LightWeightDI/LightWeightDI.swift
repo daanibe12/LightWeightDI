@@ -21,7 +21,7 @@ public class AppContainer {
     
     private init() {}
     
-    func register<Service>(_ service: Service.Type, scope:
+    public func register<Service>(_ service: Service.Type, scope:
                            ScopeType, factory: @escaping () -> Service) {
         let key = String(describing: service)
         switch scope {
