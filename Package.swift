@@ -8,21 +8,12 @@ import Foundation
 
 
 var dependencies: [Package.Dependency] = []
-var targets: [Target] = [
-    .target(name: "LightWeightDI", dependencies: ["Swinject"]),
-]
-
-    dependencies.append(
-        .package(url: "https://github.com/Swinject/Swinject.git", from: "2.6.2")
-    )
+var targets: [Target] = []
 
 let package = Package(
     name: "LightWeightDI",
     platforms: [
         .iOS(.v15),.macOS(.v13), .tvOS(.v16)
-    ],
-    products: [
-        .library(name: "LightWeightDI", targets: ["LightWeightDI"]),
     ],
     dependencies: dependencies,
     targets: targets
