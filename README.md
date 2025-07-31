@@ -1,8 +1,8 @@
 
 # LightWeightDI
 ![MacOS](https://img.shields.io/badge/MacOS-13+-green)
-![ios](https://img.shields.io/badge/ios-16+-red)
-![Cocoapods](https://img.shields.io/badge/Cocoapods-0.2.2-blue)
+![ios](https://img.shields.io/badge/ios-15+-red)
+![Cocoapods](https://img.shields.io/badge/Cocoapods-0.3.1-blue)
 [![Swift Package Manager compatible](https://img.shields.io/badge/Swift%20Package%20Manager-compatible-brightgreen.svg)](https://github.com/apple/swift-package-manager)
 
 ## About LightWeight DI
@@ -60,6 +60,3 @@ dependencies: [
 `@Autowired var appObj: AppScopeProtocol`
 
 
-## iOS apps project using clean architecture MVVM
-
-[SampleLightWeightDI6.zip](https://github.com/user-attachments/files/15747107/SampleLightWeightDI6.zip)

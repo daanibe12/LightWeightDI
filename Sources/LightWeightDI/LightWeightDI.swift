@@ -11,12 +11,9 @@ public enum ScopeType {
     case application
 }
 
-public class AppContainer {
-    public static let shard = AppContainer()
-    
-    // Transient スコープ用のファクトリを保持
+public class DependencyResolver {
+    public static let shard = DependencyResolver()
     private var weakFactories: [String: () -> Any] = [:]
-    // Singleton スコープ用のインスタンスを保持
     private var applicationInstances: [String: Any] = [:]
     
     private init() {}
@@ -28,20 +25,15 @@ public class AppContainer {
         case .weak:
             weakFactories[key] = factory
         case .application:
-            // シングルトンの場合、初回登録時にインスタンスを生成して保持
             applicationInstances[key] = factory()
         }
     }
     public func resolve<Service>(_ service: Service.Type) -> Service {
         let key = String(describing: service)
-        
-        // まずシングルトンとして登録されているか確認
         if let instance = applicationInstances[key] as? Service {
             print("DIContainer: Resolved \(key) (Singleton Instance)")
             return instance
         }
-        
-        // 次にトランジェントとしてファクトリが登録されているか確認
         if let factory = weakFactories[key] {
             guard let instance = factory() as? Service else {
                 fatalError("DIContainer: Could not cast transient")
@@ -61,7 +53,7 @@ public struct Autowired<Service> {
     private var dependency: Service
     
     public init() {
-        self.dependency = AppContainer.shard.resolve(Service.self)
+        self.dependency = DependencyResolver.shard.resolve(Service.self)
     }
     public var wrappedValue: Service {dependency}
 }
