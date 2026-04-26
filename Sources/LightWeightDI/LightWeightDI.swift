@@ -53,7 +53,7 @@ public struct Autowired<Service> {
     private var dependency: Service
     
     public init() {
-        self.dependency = DependencyResolver.shard.resolve(Service.self)
+        self.dependency = DependencyResolver.shared.resolve(Service.self)
     }
     public var wrappedValue: Service {dependency}
 }
