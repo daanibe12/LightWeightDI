@@ -9,7 +9,7 @@ import Foundation
 let package = Package(
     name: "LightWeightDI",
     platforms: [
-        .iOS(.v15),.macOS(.v13), .tvOS(.v16)
+        .iOS(.v14),.macOS(.v13), .tvOS(.v16)
     ],
     products: [
         // Products define the executables and libraries a package produces, and make them visible to other packages.

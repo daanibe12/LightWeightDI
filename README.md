@@ -1,7 +1,7 @@
 
 # LightWeightDI
 ![MacOS](https://img.shields.io/badge/MacOS-13+-green)
-![ios](https://img.shields.io/badge/ios-15+-red)
+![ios](https://img.shields.io/badge/ios-14+-red)
 ![Cocoapods](https://img.shields.io/badge/Cocoapods-0.3.1-blue)
 [![Swift Package Manager compatible](https://img.shields.io/badge/Swift%20Package%20Manager-compatible-brightgreen.svg)](https://github.com/apple/swift-package-manager)
 
