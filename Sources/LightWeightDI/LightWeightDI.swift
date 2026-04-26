@@ -12,7 +12,7 @@ public enum ScopeType {
 }
 
 public class DependencyResolver {
-    public static let shard = DependencyResolver()
+    public static let shared = DependencyResolver()
     private var weakFactories: [String: () -> Any] = [:]
     private var applicationInstances: [String: Any] = [:]
     
