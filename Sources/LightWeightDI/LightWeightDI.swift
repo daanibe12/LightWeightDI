@@ -44,6 +44,11 @@ public class DependencyResolver {
         
         fatalError("DIContainer: Dependency not found for \(key). Didyou forget to register it?")
     }
+    
+    public func initialize() {
+        weakFactories = [:]
+        applicationInstances = [:]
+    }
 }
 
 
