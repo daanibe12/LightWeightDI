@@ -1,6 +1,6 @@
 Pod::Spec.new do |spec|
   spec.name          = "LightWeightDI"
-  spec.version       = "0.3.1"
+  spec.version       = "0.5.1"
   spec.author        = { "ebina" => "ebina123jpjpjp@gmail.com" }
   spec.homepage      = "https://github.com/daanibe12/LightWeightDI"
   spec.license       = { :type => "MIT", :file => "LICENSE" }
@@ -10,10 +10,9 @@ Pod::Spec.new do |spec|
   DESC
 
   spec.swift_version         = '5.0'
-  spec.ios.deployment_target     = '16.0'
+  spec.ios.deployment_target     = '14.0'
   spec.osx.deployment_target     = '13.0'
   
   spec.source        = { :git => "https://github.com/daanibe12/LightWeightDI.git", :tag => "#{spec.version}" }
   spec.source_files  = "Sources", "Sources/**/*.swift"
-  spec.dependency "Swinject", "2.8.8"
 end
