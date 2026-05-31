@@ -42,14 +42,23 @@ public final class DependencyResolver {
         activeSessionCount = 0
     }
     
-    /// Backward-compatible overload for `() -> Service` (pre-0.6.0).
-    public func regist<Service>(_ type: Service.Type, scope: ScopeType = .weak, factory: @escaping () -> Service) {
-        regist(type, scope: scope) { _ in factory() }
+    public func register<Service>(_ type: Service.Type, scope: ScopeType = .weak, factory: @escaping () -> Service) {
+        register(type, scope: scope) { _ in factory() }
     }
 
-    public func regist<Service>(_ type: Service.Type, scope: ScopeType = .weak, factory: @escaping (DependencyResolver) -> Service) {
+    public func register<Service>(_ type: Service.Type, scope: ScopeType = .weak, factory: @escaping (DependencyResolver) -> Service) {
         lock.lock(); defer { lock.unlock() }
         registrations[String(describing: type)] = DIRegistration(scope: scope, factory: factory)
+    }
+
+    @available(*, deprecated, renamed: "register(_:scope:factory:)")
+    public func regist<Service>(_ type: Service.Type, scope: ScopeType = .weak, factory: @escaping () -> Service) {
+        register(type, scope: scope, factory: factory)
+    }
+
+    @available(*, deprecated, renamed: "register(_:scope:factory:)")
+    public func regist<Service>(_ type: Service.Type, scope: ScopeType = .weak, factory: @escaping (DependencyResolver) -> Service) {
+        register(type, scope: scope, factory: factory)
     }
     
     // 💡 内部用：セッションを開始する

@@ -10,7 +10,7 @@ struct ScopeVariationTests {
     @Test func weakScopeはresolveのたびに新しいインスタンスを返す() {
         let resolver = DependencyResolver()
         var callCount = 0
-        resolver.regist(GreeterRepository.self, scope: .weak) { _ in
+        resolver.register(GreeterRepository.self, scope: .weak) { _ in
             callCount += 1
             return GreeterRepository()
         }
@@ -25,7 +25,7 @@ struct ScopeVariationTests {
     @Test func applicationScopeは同じインスタンスを返す() {
         let resolver = DependencyResolver()
         var callCount = 0
-        resolver.regist(GreeterRepository.self, scope: .application) { _ in
+        resolver.register(GreeterRepository.self, scope: .application) { _ in
             callCount += 1
             return GreeterRepository()
         }
@@ -40,7 +40,7 @@ struct ScopeVariationTests {
     @Test func graphScopeは連続resolveで同じインスタンスを返す() {
         let resolver = DependencyResolver()
         var callCount = 0
-        resolver.regist(GreeterRepository.self, scope: .graph) { _ in
+        resolver.register(GreeterRepository.self, scope: .graph) { _ in
             callCount += 1
             return GreeterRepository()
         }
@@ -55,7 +55,7 @@ struct ScopeVariationTests {
     @Test func デフォルトスコープはweak() {
         let resolver = DependencyResolver()
         var callCount = 0
-        resolver.regist(GreeterRepository.self) { _ in
+        resolver.register(GreeterRepository.self) { _ in
             callCount += 1
             return GreeterRepository()
         }
@@ -69,7 +69,7 @@ struct ScopeVariationTests {
 
     @Test func legacyFactoryクロージャはコンパイルできる() {
         let resolver = DependencyResolver()
-        resolver.regist(GreeterRepository.self, scope: .application) {
+        resolver.register(GreeterRepository.self, scope: .application) {
             GreeterRepository()
         }
 
@@ -83,8 +83,8 @@ struct ScopeVariationTests {
         let resolverA = DependencyResolver()
         let resolverB = DependencyResolver()
 
-        resolverA.regist(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
-        resolverB.regist(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
+        resolverA.register(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
+        resolverB.register(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
 
         let a = resolverA.resolve(GreeterRepository.self)
         let b = resolverB.resolve(GreeterRepository.self)
@@ -94,8 +94,8 @@ struct ScopeVariationTests {
 
     @Test func 複数型を独立して解決できる() {
         let resolver = DependencyResolver()
-        resolver.regist(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
-        resolver.regist(NetworkClient.self, scope: .application) { _ in NetworkClient() }
+        resolver.register(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
+        resolver.register(NetworkClient.self, scope: .application) { _ in NetworkClient() }
 
         let repo = resolver.resolve(GreeterRepository.self)
         let client = resolver.resolve(NetworkClient.self)
@@ -110,8 +110,8 @@ struct DependencyGraphTests {
 
     @Test func 依存関係の連鎖を解決できる() {
         let resolver = DependencyResolver()
-        resolver.regist(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
-        resolver.regist(GreeterViewModel.self, scope: .application) { r in
+        resolver.register(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
+        resolver.register(GreeterViewModel.self, scope: .application) { r in
             GreeterViewModel(repository: r.resolve(GreeterRepository.self))
         }
 
@@ -123,12 +123,12 @@ struct DependencyGraphTests {
 
     @Test func 多段依存を解決できる() {
         let resolver = DependencyResolver()
-        resolver.regist(NetworkClient.self, scope: .application) { _ in NetworkClient() }
-        resolver.regist(AuthService.self, scope: .application) { r in
+        resolver.register(NetworkClient.self, scope: .application) { _ in NetworkClient() }
+        resolver.register(AuthService.self, scope: .application) { r in
             AuthService(client: r.resolve(NetworkClient.self))
         }
-        resolver.regist(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
-        resolver.regist(DashboardViewModel.self, scope: .application) { r in
+        resolver.register(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
+        resolver.register(DashboardViewModel.self, scope: .application) { r in
             DashboardViewModel(
                 auth: r.resolve(AuthService.self),
                 repo: r.resolve(GreeterRepository.self)
@@ -148,11 +148,11 @@ struct DependencyGraphTests {
         var weakCount = 0
         var appCount = 0
 
-        resolver.regist(NetworkClient.self, scope: .weak) { _ in
+        resolver.register(NetworkClient.self, scope: .weak) { _ in
             weakCount += 1
             return NetworkClient()
         }
-        resolver.regist(AuthService.self, scope: .application) { r in
+        resolver.register(AuthService.self, scope: .application) { r in
             appCount += 1
             return AuthService(client: r.resolve(NetworkClient.self))
         }
@@ -169,7 +169,7 @@ struct DependencyGraphTests {
     @Test func factoryにはresolverが渡される() {
         let resolver = DependencyResolver()
         var receivedResolver: DependencyResolver?
-        resolver.regist(GreeterRepository.self, scope: .weak) { r in
+        resolver.register(GreeterRepository.self, scope: .weak) { r in
             receivedResolver = r
             return GreeterRepository()
         }
@@ -180,7 +180,7 @@ struct DependencyGraphTests {
 
     @Test func プロトコル型で登録・解決できる() {
         let resolver = DependencyResolver()
-        resolver.regist(GreeterProtocol.self, scope: .application) { _ in
+        resolver.register(GreeterProtocol.self, scope: .application) { _ in
             Greeter(name: "Hello")
         }
 
@@ -195,10 +195,10 @@ struct RegistrationVariationTests {
 
     @Test func 同じ型を再登録してもapplicationキャッシュは維持される() {
         let resolver = DependencyResolver()
-        resolver.regist(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
+        resolver.register(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
         let first = resolver.resolve(GreeterRepository.self)
 
-        resolver.regist(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
+        resolver.register(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
         let second = resolver.resolve(GreeterRepository.self)
 
         #expect(first.id == second.id)
@@ -206,10 +206,10 @@ struct RegistrationVariationTests {
 
     @Test func weakScope再登録後も毎回新規生成される() {
         let resolver = DependencyResolver()
-        resolver.regist(GreeterRepository.self, scope: .weak) { _ in GreeterRepository() }
+        resolver.register(GreeterRepository.self, scope: .weak) { _ in GreeterRepository() }
         let first = resolver.resolve(GreeterRepository.self)
 
-        resolver.regist(GreeterRepository.self, scope: .weak) { _ in GreeterRepository() }
+        resolver.register(GreeterRepository.self, scope: .weak) { _ in GreeterRepository() }
         let second = resolver.resolve(GreeterRepository.self)
 
         #expect(first.id != second.id)
@@ -223,7 +223,7 @@ struct ConcurrencyTests {
     @Test func applicationScopeは並行resolveでも同一インスタンス() async {
         let resolver = DependencyResolver()
         var callCount = 0
-        resolver.regist(GreeterRepository.self, scope: .application) { _ in
+        resolver.register(GreeterRepository.self, scope: .application) { _ in
             callCount += 1
             return GreeterRepository()
         }
@@ -246,7 +246,7 @@ struct ConcurrencyTests {
     @Test func weakScopeは並行resolveでもそれぞれ生成される() async {
         let resolver = DependencyResolver()
         let counter = LockedCounter()
-        resolver.regist(GreeterRepository.self, scope: .weak) { _ in
+        resolver.register(GreeterRepository.self, scope: .weak) { _ in
             counter.increment()
             return GreeterRepository()
         }
@@ -345,7 +345,7 @@ struct DependencyResolverSharedIsolationTests {
     @Suite
     struct AutowiredVariationTests {
 
-        @Test func graphScopeはregist時点では生成されAutowired初アクセスで紐づく() {
+        @Test func graphScopeはregister時点では生成されAutowired初アクセスで紐づく() {
             resetSharedResolver()
 
             final class LinkedService: AnyObject {
@@ -356,7 +356,7 @@ struct DependencyResolverSharedIsolationTests {
             }
 
             var factoryCount = 0
-            DependencyResolver.shared.regist(LinkedService.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(LinkedService.self, scope: .graph) { _ in
                 factoryCount += 1
                 return LinkedService()
             }
@@ -375,7 +375,7 @@ struct DependencyResolverSharedIsolationTests {
 
         @Test func autowiredは初回アクセスで解決しプロパティ内キャッシュする() {
             resetSharedResolver()
-            DependencyResolver.shared.regist(AutowiredUniqueCounter.self, scope: .weak) { _ in
+            DependencyResolver.shared.register(AutowiredUniqueCounter.self, scope: .weak) { _ in
                 AutowiredUniqueCounter()
             }
 
@@ -388,7 +388,7 @@ struct DependencyResolverSharedIsolationTests {
 
         @Test func autowiredGraphScopeは別Holder間で同一インスタンスを共有する() {
             resetSharedResolver()
-            DependencyResolver.shared.regist(AutowiredGraphCounter.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(AutowiredGraphCounter.self, scope: .graph) { _ in
                 AutowiredGraphCounter()
             }
 
@@ -400,7 +400,7 @@ struct DependencyResolverSharedIsolationTests {
 
         @Test func autowiredApplicationScopeはHolder間で同一インスタンスを共有する() {
             resetSharedResolver()
-            DependencyResolver.shared.regist(AutowiredApplicationCounter.self, scope: .application) { _ in
+            DependencyResolver.shared.register(AutowiredApplicationCounter.self, scope: .application) { _ in
                 AutowiredApplicationCounter()
             }
 
@@ -412,7 +412,7 @@ struct DependencyResolverSharedIsolationTests {
 
         @Test func autowiredWeakScopeはHolderごとに別インスタンス() {
             resetSharedResolver()
-            DependencyResolver.shared.regist(AutowiredUniqueCounter.self, scope: .weak) { _ in
+            DependencyResolver.shared.register(AutowiredUniqueCounter.self, scope: .weak) { _ in
                 AutowiredUniqueCounter()
             }
 
@@ -434,11 +434,11 @@ struct DependencyResolverSharedIsolationTests {
 
             var graphCount = 0
             var weakCount = 0
-            DependencyResolver.shared.regist(GraphDep.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(GraphDep.self, scope: .graph) { _ in
                 graphCount += 1
                 return GraphDep()
             }
-            DependencyResolver.shared.regist(WeakDep.self, scope: .weak) { _ in
+            DependencyResolver.shared.register(WeakDep.self, scope: .weak) { _ in
                 weakCount += 1
                 return WeakDep()
             }
@@ -467,7 +467,7 @@ struct DependencyResolverSharedIsolationTests {
             final class SettingsScreen { @Autowired var dep: CrossParentDep }
 
             var factoryCount = 0
-            DependencyResolver.shared.regist(CrossParentDep.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(CrossParentDep.self, scope: .graph) { _ in
                 factoryCount += 1
                 return CrossParentDep()
             }
@@ -491,11 +491,11 @@ struct DependencyResolverSharedIsolationTests {
 
             var graphCount = 0
             var weakCount = 0
-            DependencyResolver.shared.regist(GraphDep.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(GraphDep.self, scope: .graph) { _ in
                 graphCount += 1
                 return GraphDep()
             }
-            DependencyResolver.shared.regist(WeakDep.self, scope: .weak) { _ in
+            DependencyResolver.shared.register(WeakDep.self, scope: .weak) { _ in
                 weakCount += 1
                 return WeakDep()
             }
@@ -533,7 +533,7 @@ struct DependencyResolverSharedIsolationTests {
                 @Autowired var service: ReusableGraphService
             }
 
-            DependencyResolver.shared.regist(ReusableGraphService.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(ReusableGraphService.self, scope: .graph) { _ in
                 ReusableGraphService()
             }
 
@@ -556,7 +556,7 @@ struct DependencyResolverSharedIsolationTests {
             }
 
             var factoryCount = 0
-            DependencyResolver.shared.regist(EphemeralGraphService.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(EphemeralGraphService.self, scope: .graph) { _ in
                 factoryCount += 1
                 return EphemeralGraphService()
             }
@@ -592,9 +592,9 @@ struct DependencyResolverSharedIsolationTests {
                 @Autowired var repo: LazyGraphRepo
             }
 
-            DependencyResolver.shared.regist(LazyGraphRepo.self, scope: .graph) { _ in LazyGraphRepo() }
-            DependencyResolver.shared.regist(LazyGraphUseCase.self, scope: .graph) { _ in LazyGraphUseCase() }
-            DependencyResolver.shared.regist(LazyGraphPresenter.self, scope: .graph) { _ in LazyGraphPresenter() }
+            DependencyResolver.shared.register(LazyGraphRepo.self, scope: .graph) { _ in LazyGraphRepo() }
+            DependencyResolver.shared.register(LazyGraphUseCase.self, scope: .graph) { _ in LazyGraphUseCase() }
+            DependencyResolver.shared.register(LazyGraphPresenter.self, scope: .graph) { _ in LazyGraphPresenter() }
 
             var presenter = LazyGraphPresenter()
             let viaUseCase = presenter.useCase.repo.id
@@ -621,13 +621,13 @@ struct DependencyResolverSharedIsolationTests {
             let repositoryFactoryCount = FactoryCallCounter()
             let useCaseFactoryCount = FactoryCallCounter()
 
-            DependencyResolver.shared.regist(UserRepository.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(UserRepository.self, scope: .graph) { _ in
                 repositoryFactoryCount.track { UserRepository() }
             }
-            DependencyResolver.shared.regist(ProfileUseCase.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(ProfileUseCase.self, scope: .graph) { _ in
                 useCaseFactoryCount.track { ProfileUseCase() }
             }
-            DependencyResolver.shared.regist(ProfilePresenter.self, scope: .graph) { _ in ProfilePresenter() }
+            DependencyResolver.shared.register(ProfilePresenter.self, scope: .graph) { _ in ProfilePresenter() }
 
             var presenter = ProfilePresenter()
             #expect(repositoryFactoryCount.count == 0)
@@ -665,7 +665,7 @@ struct DependencyResolverSharedIsolationTests {
 
             let resolver = DependencyResolver()
             let graphCounter = FactoryCallCounter()
-            resolver.regist(SharedService.self, scope: .graph) { _ in graphCounter.track { SharedService() } }
+            resolver.register(SharedService.self, scope: .graph) { _ in graphCounter.track { SharedService() } }
             let graphFirst = resolver.resolve(SharedService.self)
             let graphSecond = resolver.resolve(SharedService.self)
 
@@ -695,8 +695,8 @@ struct DependencyResolverSharedIsolationTests {
 
             let resolver = DependencyResolver()
             let graphCounter = FactoryCallCounter()
-            resolver.regist(SharedDep.self, scope: .graph) { _ in graphCounter.track { SharedDep() } }
-            resolver.regist(DualHolder.self, scope: .graph) { r in
+            resolver.register(SharedDep.self, scope: .graph) { _ in graphCounter.track { SharedDep() } }
+            resolver.register(DualHolder.self, scope: .graph) { r in
                 DualHolder(
                     first: r.resolve(SharedDep.self),
                     second: r.resolve(SharedDep.self)
@@ -738,10 +738,10 @@ struct DependencyResolverSharedIsolationTests {
 
             let resolver = DependencyResolver()
             let graphCounter = FactoryCallCounter()
-            resolver.regist(SharedLeaf.self, scope: .graph) { _ in graphCounter.track { SharedLeaf() } }
-            resolver.regist(LeftArm.self, scope: .graph) { r in LeftArm(leaf: r.resolve(SharedLeaf.self)) }
-            resolver.regist(RightArm.self, scope: .graph) { r in RightArm(leaf: r.resolve(SharedLeaf.self)) }
-            resolver.regist(Root.self, scope: .graph) { r in
+            resolver.register(SharedLeaf.self, scope: .graph) { _ in graphCounter.track { SharedLeaf() } }
+            resolver.register(LeftArm.self, scope: .graph) { r in LeftArm(leaf: r.resolve(SharedLeaf.self)) }
+            resolver.register(RightArm.self, scope: .graph) { r in RightArm(leaf: r.resolve(SharedLeaf.self)) }
+            resolver.register(Root.self, scope: .graph) { r in
                 Root(left: r.resolve(LeftArm.self), right: r.resolve(RightArm.self))
             }
             let graphRoot = resolver.resolve(Root.self)
@@ -773,11 +773,11 @@ struct DependencyResolverSharedIsolationTests {
             }
 
             let graphCounter = FactoryCallCounter()
-            DependencyResolver.shared.regist(SharedRepo.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(SharedRepo.self, scope: .graph) { _ in
                 graphCounter.track { SharedRepo() }
             }
-            DependencyResolver.shared.regist(ConsumerA.self, scope: .graph) { _ in ConsumerA() }
-            DependencyResolver.shared.regist(ConsumerB.self, scope: .graph) { _ in ConsumerB() }
+            DependencyResolver.shared.register(ConsumerA.self, scope: .graph) { _ in ConsumerA() }
+            DependencyResolver.shared.register(ConsumerB.self, scope: .graph) { _ in ConsumerB() }
 
             var consumerA = ConsumerA()
             var consumerB = ConsumerB()
@@ -800,7 +800,7 @@ struct DependencyResolverSharedIsolationTests {
 
             let resolver = DependencyResolver()
             let graphCounter = FactoryCallCounter()
-            resolver.regist(HeldService.self, scope: .graph) { _ in graphCounter.track { HeldService() } }
+            resolver.register(HeldService.self, scope: .graph) { _ in graphCounter.track { HeldService() } }
             let graphHeld = resolver.resolve(HeldService.self)
             let graphAgain = resolver.resolve(HeldService.self)
 
@@ -826,7 +826,7 @@ struct DependencyResolverSharedIsolationTests {
             let simSecond = simulator.resolve(ReleasedService.self) { factoryCounter.track { ReleasedService() } }
 
             let graphCounter = FactoryCallCounter()
-            DependencyResolver.shared.regist(ReleasedService.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(ReleasedService.self, scope: .graph) { _ in
                 graphCounter.track { ReleasedService() }
             }
 
@@ -875,10 +875,10 @@ struct DependencyResolverSharedIsolationTests {
                 }
             }
 
-            resolver.regist(SharedNode.self, scope: .graph) { _ in
+            resolver.register(SharedNode.self, scope: .graph) { _ in
                 counter.track { SharedNode() }
             }
-            resolver.regist(DualConsumer.self, scope: .graph) { r in
+            resolver.register(DualConsumer.self, scope: .graph) { r in
                 DualConsumer(
                     first: r.resolve(SharedNode.self),
                     second: r.resolve(SharedNode.self)
@@ -915,10 +915,10 @@ struct DependencyResolverSharedIsolationTests {
                 }
             }
 
-            resolver.regist(SharedLeaf.self, scope: .graph) { _ in counter.track { SharedLeaf() } }
-            resolver.regist(LeftBranch.self, scope: .graph) { r in LeftBranch(leaf: r.resolve(SharedLeaf.self)) }
-            resolver.regist(RightBranch.self, scope: .graph) { r in RightBranch(leaf: r.resolve(SharedLeaf.self)) }
-            resolver.regist(DiamondRoot.self, scope: .graph) { r in
+            resolver.register(SharedLeaf.self, scope: .graph) { _ in counter.track { SharedLeaf() } }
+            resolver.register(LeftBranch.self, scope: .graph) { r in LeftBranch(leaf: r.resolve(SharedLeaf.self)) }
+            resolver.register(RightBranch.self, scope: .graph) { r in RightBranch(leaf: r.resolve(SharedLeaf.self)) }
+            resolver.register(DiamondRoot.self, scope: .graph) { r in
                 DiamondRoot(
                     left: r.resolve(LeftBranch.self),
                     right: r.resolve(RightBranch.self)
@@ -947,8 +947,8 @@ struct DependencyResolverSharedIsolationTests {
                 }
             }
 
-            resolver.regist(SharedNode.self, scope: .weak) { _ in counter.track { SharedNode() } }
-            resolver.regist(DualConsumer.self, scope: .graph) { r in
+            resolver.register(SharedNode.self, scope: .weak) { _ in counter.track { SharedNode() } }
+            resolver.register(DualConsumer.self, scope: .graph) { r in
                 DualConsumer(
                     first: r.resolve(SharedNode.self),
                     second: r.resolve(SharedNode.self)
@@ -978,12 +978,12 @@ struct DependencyResolverSharedIsolationTests {
             }
 
             let counter = FactoryCallCounter()
-            DependencyResolver.shared.regist(ScreenSharedRepo.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(ScreenSharedRepo.self, scope: .graph) { _ in
                 counter.track { ScreenSharedRepo() }
             }
-            DependencyResolver.shared.regist(ScreenConsumerA.self, scope: .graph) { _ in ScreenConsumerA() }
-            DependencyResolver.shared.regist(ScreenConsumerB.self, scope: .graph) { _ in ScreenConsumerB() }
-            DependencyResolver.shared.regist(ScreenRoot.self, scope: .graph) { _ in ScreenRoot() }
+            DependencyResolver.shared.register(ScreenConsumerA.self, scope: .graph) { _ in ScreenConsumerA() }
+            DependencyResolver.shared.register(ScreenConsumerB.self, scope: .graph) { _ in ScreenConsumerB() }
+            DependencyResolver.shared.register(ScreenRoot.self, scope: .graph) { _ in ScreenRoot() }
 
             var screen = ScreenRoot()
             let repoA = screen.consumerA.repo
@@ -1007,11 +1007,11 @@ struct DependencyResolverSharedIsolationTests {
             }
 
             let counter = FactoryCallCounter()
-            DependencyResolver.shared.regist(PathSharedRepo.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(PathSharedRepo.self, scope: .graph) { _ in
                 counter.track { PathSharedRepo() }
             }
-            DependencyResolver.shared.regist(PathUseCase.self, scope: .graph) { _ in PathUseCase() }
-            DependencyResolver.shared.regist(PathPresenter.self, scope: .graph) { _ in PathPresenter() }
+            DependencyResolver.shared.register(PathUseCase.self, scope: .graph) { _ in PathUseCase() }
+            DependencyResolver.shared.register(PathPresenter.self, scope: .graph) { _ in PathPresenter() }
 
             var presenter = PathPresenter()
             let viaUseCase = presenter.useCase.repo
@@ -1035,11 +1035,11 @@ struct DependencyResolverSharedIsolationTests {
             }
 
             let counter = FactoryCallCounter()
-            DependencyResolver.shared.regist(OrderSharedRepo.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(OrderSharedRepo.self, scope: .graph) { _ in
                 counter.track { OrderSharedRepo() }
             }
-            DependencyResolver.shared.regist(OrderUseCase.self, scope: .graph) { _ in OrderUseCase() }
-            DependencyResolver.shared.regist(OrderPresenter.self, scope: .graph) { _ in OrderPresenter() }
+            DependencyResolver.shared.register(OrderUseCase.self, scope: .graph) { _ in OrderUseCase() }
+            DependencyResolver.shared.register(OrderPresenter.self, scope: .graph) { _ in OrderPresenter() }
 
             var presenter2 = OrderPresenter()
             let directFirst = presenter2.repo
@@ -1067,12 +1067,12 @@ struct DependencyResolverSharedIsolationTests {
             }
 
             let counter = FactoryCallCounter()
-            DependencyResolver.shared.regist(TripleShared.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(TripleShared.self, scope: .graph) { _ in
                 counter.track { TripleShared() }
             }
-            DependencyResolver.shared.regist(TripleA.self, scope: .graph) { _ in TripleA() }
-            DependencyResolver.shared.regist(TripleB.self, scope: .graph) { _ in TripleB() }
-            DependencyResolver.shared.regist(TripleRoot.self, scope: .graph) { _ in TripleRoot() }
+            DependencyResolver.shared.register(TripleA.self, scope: .graph) { _ in TripleA() }
+            DependencyResolver.shared.register(TripleB.self, scope: .graph) { _ in TripleB() }
+            DependencyResolver.shared.register(TripleRoot.self, scope: .graph) { _ in TripleRoot() }
 
             var root = TripleRoot()
             let idA = root.a.shared.id
@@ -1098,7 +1098,7 @@ struct DependencyResolverSharedIsolationTests {
                 let id = UUID()
             }
 
-            resolver.regist(ActiveCacheTarget.self, scope: .graph) { _ in
+            resolver.register(ActiveCacheTarget.self, scope: .graph) { _ in
                 counter.track { ActiveCacheTarget() }
             }
 
@@ -1123,8 +1123,8 @@ struct DependencyResolverSharedIsolationTests {
                 }
             }
 
-            resolver.regist(ChainNode.self, scope: .graph) { _ in counter.track { ChainNode() } }
-            resolver.regist(ChainParent.self, scope: .graph) { r in
+            resolver.register(ChainNode.self, scope: .graph) { _ in counter.track { ChainNode() } }
+            resolver.register(ChainParent.self, scope: .graph) { r in
                 ChainParent(
                     left: r.resolve(ChainNode.self),
                     right: r.resolve(ChainNode.self)
@@ -1149,7 +1149,7 @@ struct DependencyResolverSharedIsolationTests {
                 @Autowired var target: WeakCacheTarget
             }
 
-            DependencyResolver.shared.regist(WeakCacheTarget.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(WeakCacheTarget.self, scope: .graph) { _ in
                 counter.track { WeakCacheTarget() }
             }
 
@@ -1175,7 +1175,7 @@ struct DependencyResolverSharedIsolationTests {
                 @Autowired var target: KeptTarget
             }
 
-            DependencyResolver.shared.regist(KeptTarget.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(KeptTarget.self, scope: .graph) { _ in
                 counter.track { KeptTarget() }
             }
 
@@ -1198,7 +1198,7 @@ struct DependencyResolverSharedIsolationTests {
                 @Autowired var target: DeadTarget
             }
 
-            DependencyResolver.shared.regist(DeadTarget.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(DeadTarget.self, scope: .graph) { _ in
                 counter.track { DeadTarget() }
             }
 
@@ -1229,7 +1229,7 @@ struct DependencyResolverSharedIsolationTests {
                 @Autowired var target: LayerTarget
             }
 
-            DependencyResolver.shared.regist(LayerTarget.self, scope: .graph) { _ in
+            DependencyResolver.shared.register(LayerTarget.self, scope: .graph) { _ in
                 counter.track { LayerTarget() }
             }
 

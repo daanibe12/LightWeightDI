@@ -64,10 +64,10 @@ Register types at app launch (e.g. in `AppDelegate` or `@main` `App` initializer
 import LightWeightDI
 
 // 1. Register (Composition Root) — .graph for screen-scoped trees, .application for app singletons
-DependencyResolver.shared.regist(UserRepositoryProtocol.self, scope: .application) { _ in
+DependencyResolver.shared.register(UserRepositoryProtocol.self, scope: .application) { _ in
     UserRepository()
 }
-DependencyResolver.shared.regist(ProfileViewModel.self, scope: .graph) { _ in ProfileViewModel() }
+DependencyResolver.shared.register(ProfileViewModel.self, scope: .graph) { _ in ProfileViewModel() }
 
 // 2. Types — dependencies via @Autowired, not init parameters
 final class ProfileViewModel: AnyObject {
@@ -86,28 +86,30 @@ let repo = vm.repository          // UserRepository resolved here
 
 ## Registration
 
-Two `regist` overloads are supported (0.6.0+):
+Two `register` overloads are supported:
 
 ```swift
-// Legacy (still compiles — same as pre-0.6.0)
-func regist<Service>(
+// No nested resolve in factory
+func register<Service>(
     _ type: Service.Type,
     scope: ScopeType = .weak,
     factory: @escaping () -> Service
 )
 
 // Use when resolving nested dependencies inside the factory
-func regist<Service>(
+func register<Service>(
     _ type: Service.Type,
     scope: ScopeType = .weak,
     factory: @escaping (DependencyResolver) -> Service
 )
 ```
 
+> **Migration:** `regist` remains as a deprecated alias for `register` (typo from older releases).
+
 **Legacy style** (no breaking change from older versions):
 
 ```swift
-DependencyResolver.shared.regist(GreeterProtocol.self, scope: .application) {
+DependencyResolver.shared.register(GreeterProtocol.self, scope: .application) {
     Greeter(name: "Hello")
 }
 ```
@@ -115,7 +117,7 @@ DependencyResolver.shared.regist(GreeterProtocol.self, scope: .application) {
 **Nested resolve in factory** — pass the resolver parameter:
 
 ```swift
-resolver.regist(AuthService.self, scope: .application) { r in
+resolver.register(AuthService.self, scope: .application) { r in
     AuthService(client: r.resolve(NetworkClient.self))
 }
 ```
@@ -137,7 +139,7 @@ Use the resolver parameter when the factory calls `r.resolve`. A `() -> Service`
 ### `.weak` (default)
 
 ```swift
-resolver.regist(TransientService.self) { _ in TransientService() }
+resolver.register(TransientService.self) { _ in TransientService() }
 // same as scope: .weak
 
 let x = resolver.resolve(TransientService.self)
@@ -152,7 +154,7 @@ For nested `@Autowired` graphs and shared screen-scoped instances, register with
 ### `.application`
 
 ```swift
-resolver.regist(Database.self, scope: .application) { _ in Database() }
+resolver.register(Database.self, scope: .application) { _ in Database() }
 
 let db1 = resolver.resolve(Database.self)
 let db2 = resolver.resolve(Database.self)
@@ -182,9 +184,9 @@ ProfilePresenter
 **1. Registration** — factories only create the type itself:
 
 ```swift
-DependencyResolver.shared.regist(UserRepository.self, scope: .graph) { _ in UserRepository() }
-DependencyResolver.shared.regist(ProfileUseCase.self, scope: .graph) { _ in ProfileUseCase() }
-DependencyResolver.shared.regist(ProfilePresenter.self, scope: .graph) { _ in ProfilePresenter() }
+DependencyResolver.shared.register(UserRepository.self, scope: .graph) { _ in UserRepository() }
+DependencyResolver.shared.register(ProfileUseCase.self, scope: .graph) { _ in ProfileUseCase() }
+DependencyResolver.shared.register(ProfilePresenter.self, scope: .graph) { _ in ProfilePresenter() }
 ```
 
 **2. Types** — each dependency is an `@Autowired` property on the parent:
@@ -245,8 +247,8 @@ When nothing strongly references a graph-scoped instance anymore, the next resol
 If a type takes dependencies only through `init` and has no `@Autowired` properties, wire them in the factory with `r.resolve`. Sharing applies **within that single** `resolve(Root.self)` call:
 
 ```swift
-resolver.regist(Branch.self, scope: .graph) { _ in Branch() }
-resolver.regist(Root.self, scope: .graph) { r in
+resolver.register(Branch.self, scope: .graph) { _ in Branch() }
+resolver.register(Root.self, scope: .graph) { r in
     Root(
         left: r.resolve(Branch.self),
         right: r.resolve(Branch.self)
@@ -271,7 +273,7 @@ final class MyViewModel {
 - Together with **`.graph` registration**, this is how parent/child relationships are formed: reading `parent.child.grandchild` resolves each registered type and shares graph-scoped instances across the tree (via `activeGraphCache` during a session and `weakGraphCache` while strong references exist)
 
 ```swift
-DependencyResolver.shared.regist(HeavyService.self, scope: .graph) { _ in HeavyService() }
+DependencyResolver.shared.register(HeavyService.self, scope: .graph) { _ in HeavyService() }
 
 final class MyHolder {
     @Autowired var service: HeavyService
@@ -323,7 +325,7 @@ Create a **separate** resolver for tests so production registrations are untouch
 
 ```swift
 let testResolver = DependencyResolver()
-testResolver.regist(UserRepositoryProtocol.self, scope: .application) { _ in
+testResolver.register(UserRepositoryProtocol.self, scope: .application) { _ in
     MockUserRepository()
 }
 
@@ -335,7 +337,7 @@ For code that uses `@Autowired` (bound to `shared`), reset in `setUp` / `tearDow
 ```swift
 func setUp() {
     DependencyResolver.shared.initialize()
-    DependencyResolver.shared.regist(UserRepositoryProtocol.self, scope: .application) { _ in
+    DependencyResolver.shared.register(UserRepositoryProtocol.self, scope: .application) { _ in
         MockUserRepository()
     }
 }
@@ -357,7 +359,7 @@ swift test
 |-----|-------------|
 | `DependencyResolver.shared` | Default app-wide container |
 | `DependencyResolver()` | Isolated container (tests, modules) |
-| `regist(_:scope:factory:)` | Register a type with a factory |
+| `register(_:scope:factory:)` | Register a type with a factory |
 | `resolve(_:)` | Resolve a registered type |
 | `initialize()` | Clear registrations and all caches |
 | `@Autowired` | Lazy property injection from `shared` |
