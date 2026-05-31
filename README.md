@@ -89,14 +89,12 @@ let repo = vm.repository          // UserRepository resolved here
 Two `register` overloads are supported:
 
 ```swift
-// No nested resolve in factory
 func register<Service>(
     _ type: Service.Type,
     scope: ScopeType = .weak,
     factory: @escaping () -> Service
 )
 
-// Use when resolving nested dependencies inside the factory
 func register<Service>(
     _ type: Service.Type,
     scope: ScopeType = .weak,
@@ -104,9 +102,7 @@ func register<Service>(
 )
 ```
 
-> **Migration:** `regist` remains as a deprecated alias for `register` (typo from older releases).
-
-**Legacy style** (no breaking change from older versions):
+**Legacy style** (`() -> Service`):
 
 ```swift
 DependencyResolver.shared.register(GreeterProtocol.self, scope: .application) {
