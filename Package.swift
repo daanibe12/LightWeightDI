@@ -1,33 +1,54 @@
 // swift-tools-version: 5.9
-// The swift-tools-version declares the minimum version of Swift required to build this package.
 
-
+import CompilerPluginSupport
 import PackageDescription
-import Foundation
-
 
 let package = Package(
     name: "LightWeightDI",
     platforms: [
-        .iOS(.v14),.macOS(.v13), .tvOS(.v16)
+        .iOS(.v14),
+        .macOS(.v13),
+        .tvOS(.v16),
     ],
     products: [
-        // Products define the executables and libraries a package produces, and make them visible to other packages.
         .library(
             name: "LightWeightDI",
-            targets: ["LightWeightDI"]),
+            targets: ["LightWeightDI"]
+        ),
     ],
     dependencies: [
-        // Dependencies declare other packages that this package depends on.
-        // .package(url: /* package url */, from: "1.0.0"),
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "600.0.0"),
     ],
     targets: [
         .target(
             name: "LightWeightDI",
-            dependencies: []),
+            dependencies: ["LightWeightDIMacros"]
+        ),
+        .target(
+            name: "LightWeightDIMacros",
+            dependencies: ["LightWeightDIMacrosPlugin"]
+        ),
+        .macro(
+            name: "LightWeightDIMacrosPlugin",
+            dependencies: [
+                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
+                .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
+                .product(name: "SwiftDiagnostics", package: "swift-syntax"),
+            ]
+        ),
         .testTarget(
             name: "LightWeightDITests",
-            dependencies: ["LightWeightDI"]),
+            dependencies: ["LightWeightDI"]
+        ),
+        .testTarget(
+            name: "LightWeightDIMacroTests",
+            dependencies: [
+                "LightWeightDI",
+                "LightWeightDIMacros",
+                "LightWeightDIMacrosPlugin",
+                .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax"),
+            ]
+        ),
     ]
 )
-

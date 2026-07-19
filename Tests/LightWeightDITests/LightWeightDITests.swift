@@ -1,6 +1,11 @@
 import Testing
 @testable import LightWeightDI
 import Foundation
+import Observation
+import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 
 // MARK: - スコープ別テスト
@@ -1243,7 +1248,188 @@ struct DependencyResolverSharedIsolationTests {
             #expect(first === second)
         }
     }
+
+    @Suite
+    struct AutowiredStateTests {
+
+        @Test
+        func defaultInitResolvesFromShared() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var callCount = 0
+            DependencyResolver.shared.register(AutowiredStateGreeter.self, scope: .graph) { _ in
+                callCount += 1
+                return AutowiredStateGreeter()
+            }
+
+            _ = AutowiredState<AutowiredStateGreeter>()
+            #expect(callCount == 1)
+        }
+
+        @Test
+        func wrappedValueInitDoesNotResolve() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var callCount = 0
+            DependencyResolver.shared.register(AutowiredStateGreeter.self, scope: .graph) { _ in
+                callCount += 1
+                return AutowiredStateGreeter()
+            }
+
+            let provided = AutowiredStateGreeter()
+            _ = AutowiredState(wrappedValue: provided)
+            #expect(callCount == 0)
+        }
+
+        @Test
+        func resolveFromSharedRunsInsideGraphSession() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            DependencyResolver.shared.register(AutowiredStateLeaf.self, scope: .graph) { _ in
+                AutowiredStateLeaf()
+            }
+            DependencyResolver.shared.register(AutowiredStateRoot.self, scope: .graph) { r in
+                AutowiredStateRoot(
+                    left: r.resolve(AutowiredStateLeaf.self),
+                    right: r.resolve(AutowiredStateLeaf.self)
+                )
+            }
+
+            let root = AutowiredState<AutowiredStateRoot>.resolveFromShared()
+            #expect(root.left === root.right)
+        }
+
+        @Test
+        @MainActor
+        func swiftUIViewResolvesViewModelViaAutowiredState() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var repositoryCount = 0
+            var viewModelCount = 0
+            DependencyResolver.shared.register(ProfileScreenRepository.self, scope: .graph) { _ in
+                repositoryCount += 1
+                return ProfileScreenRepository()
+            }
+            DependencyResolver.shared.register(ProfileScreenViewModel.self, scope: .graph) { r in
+                viewModelCount += 1
+                return ProfileScreenViewModel(repository: r.resolve(ProfileScreenRepository.self))
+            }
+
+            let hosting = NSHostingController(rootView: ProfileScreen())
+            hosting.loadView()
+            _ = hosting.view.fittingSize
+
+            #expect(viewModelCount == 1)
+            #expect(repositoryCount == 1)
+            #expect(hosting.rootView.viewModel.title == "profile")
+        }
+    }
+
+    @Suite
+    struct ObservableAutowiredIntegrationTests {
+
+        @Test
+        @MainActor
+        func observableViewModelResolvesWithAutowired() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            DependencyResolver.shared.register(
+                ObservableAutowiredGreeterRepository.self,
+                scope: .graph
+            ) { _ in
+                ObservableAutowiredGreeterRepository()
+            }
+
+            let viewModel = ObservableAutowiredViewModel()
+            let first = viewModel.repository
+            let second = viewModel.repository
+
+            #expect(first === second)
+        }
+
+        /// 昔の書き方: `@DIObservable` ではなく型が `Observable` に準拠しているだけでも DI できる
+        @Test
+        func plainObservableConformanceWorksWithAutowired() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            DependencyResolver.shared.register(LegacyObservableService.self, scope: .graph) { _ in
+                LegacyObservableService()
+            }
+
+            let holder = LegacyObservableHolder()
+            let first = holder.service
+            let second = holder.service
+
+            #expect(first === second)
+            #expect(first is any Observable)
+        }
+    }
 }
+
+@DIObservable
+@MainActor
+private final class ObservableAutowiredViewModel {
+    @Autowired var repository: ObservableAutowiredGreeterRepository
+}
+
+private final class ObservableAutowiredGreeterRepository: @unchecked Sendable {
+    let id = UUID()
+}
+
+/// Observation のプロトコルに明示準拠するだけの型（`@DIObservable` / `@Observable` マクロなし）
+private final class LegacyObservableService: Observable {
+    let id = UUID()
+}
+
+private final class LegacyObservableHolder {
+    @Autowired var service: LegacyObservableService
+}
+
+private final class AutowiredStateGreeter {
+    let id = UUID()
+}
+
+private final class AutowiredStateLeaf {
+    let id = UUID()
+}
+
+private final class AutowiredStateRoot {
+    let left: AutowiredStateLeaf
+    let right: AutowiredStateLeaf
+
+    init(left: AutowiredStateLeaf, right: AutowiredStateLeaf) {
+        self.left = left
+        self.right = right
+    }
+}
+
+private final class ProfileScreenRepository {
+    let id = UUID()
+}
+
+private final class ProfileScreenViewModel {
+    let title = "profile"
+    let repository: ProfileScreenRepository
+
+    init(repository: ProfileScreenRepository) {
+        self.repository = repository
+    }
+}
+
+private struct ProfileScreen: View {
+    @AutowiredState var viewModel: ProfileScreenViewModel
+
+    var body: some View {
+        Text(viewModel.title)
+    }
+}
+
 // MARK: - テスト用型
 
 protocol GreeterProtocol: AnyObject {
