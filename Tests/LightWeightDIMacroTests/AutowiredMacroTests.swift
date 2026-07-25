@@ -26,7 +26,8 @@ struct AutowiredMacroExpansionTests {
                     get {
                         if let cached = __di_repository { return cached }
                         let resolver = DependencyResolver.shared
-                        resolver.startGraphSession()
+                        let graphID = DependencyResolver.graphIdentity(for: self)
+                        resolver.startGraphSession(id: graphID)
                         defer { resolver.endGraphSession() }
                         let resolved = resolver.resolve(GreeterRepository.self)
                         __di_repository = resolved
@@ -59,7 +60,8 @@ struct AutowiredMacroExpansionTests {
                     get {
                         if let cached = __di_repository { return cached }
                         let resolver = DependencyResolver.shared
-                        resolver.startGraphSession()
+                        let graphID = DependencyResolver.graphIdentity(for: self)
+                        resolver.startGraphSession(id: graphID)
                         defer { resolver.endGraphSession() }
                         let resolved = resolver.resolve(GreeterRepository.self)
                         __di_repository = resolved

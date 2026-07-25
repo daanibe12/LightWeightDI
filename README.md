@@ -3,7 +3,6 @@
 ![macOS](https://img.shields.io/badge/macOS-13+-green)
 ![iOS](https://img.shields.io/badge/iOS-14+-red)
 ![tvOS](https://img.shields.io/badge/tvOS-16+-blue)
-![CocoaPods](https://img.shields.io/badge/CocoaPods-0.6.0-blue)
 [![Swift Package Manager](https://img.shields.io/badge/Swift%20Package%20Manager-compatible-brightgreen.svg)](https://github.com/apple/swift-package-manager)
 
 A small, self-contained dependency injection library for Swift on Apple platforms. No third-party runtime dependencies.
@@ -11,11 +10,13 @@ A small, self-contained dependency injection library for Swift on Apple platform
 ## Features
 
 - **`DependencyResolver`** — register and resolve dependencies by type
-- **`@Autowired`** — property-wrapper injection with lazy resolution on first access
+- **`@Autowired`** — macro-based lazy injection on first property access
+- **`@AutowiredState`** — SwiftUI `DynamicProperty` that resolves once and owns the instance with `@State`
+- **`@DIObservable`** — Observation-compatible macro that marks `@Autowired` members as `@ObservationIgnored`
 - **Three scopes** — `.weak` (default), `.application`, and `.graph`
 - **Nested resolution** — factories receive the resolver so dependencies chain through the same container
 - **Thread-safe** — internal `NSRecursiveLock` around container state
-- **Graph scope** — deduplicates instances within a resolve chain and releases them when no strong references remain (unlike a permanent singleton cache)
+- **Graph scope** — deduplicates instances within one object tree (UseCase / Repository diamonds), isolated per owning root so navigation stacks do not collide
 
 ## Requirements
 
@@ -26,17 +27,21 @@ A small, self-contained dependency injection library for Swift on Apple platform
 | tvOS     | 16.0+   |
 | Swift    | 5.9+    |
 
+`@DIObservable` uses the Observation framework (iOS 17+ / macOS 14+ / tvOS 17+).
+
 ## Installation
 
-### Swift Package Manager
-
 **Xcode:** File → Add Package Dependencies → enter the repository URL.
+
+`@Autowired` and `@DIObservable` are implemented as Swift macros. The first time you add this package, Xcode will ask you to **Trust & Enable** the macro plugin. That is expected — macros run at compile time, so Xcode requires an explicit allow. Without trusting them, the macros will not expand and builds that use `@Autowired` / `@DIObservable` will fail.
+
+Core APIs (`DependencyResolver`, `register` / `resolve`, `@AutowiredState`) work without enabling macros.
 
 **Package.swift:**
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.6.0")
+    .package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.7.0")
 ],
 targets: [
     .target(
@@ -46,42 +51,73 @@ targets: [
 ]
 ```
 
-### CocoaPods
-
-```ruby
-use_frameworks!
-
-target 'YourApp' do
-  pod 'LightWeightDI', '0.6.0'
-end
-```
+Installation is **Swift Package Manager only**. CocoaPods support was removed in 0.7.0.
 
 ## Quick start
 
-Register types at app launch (e.g. in `AppDelegate` or `@main` `App` initializer), then use `@Autowired` on each type.
+Register types at app launch (e.g. in `AppDelegate` or `@main` `App` initializer).
+
+- **ViewModel** → `.weak` (default): one instance per screen / owner
+- **UseCase / Repository** (shared inside one VM tree) → `.graph`
+- **App singletons** → `.application`
 
 ```swift
 import LightWeightDI
 
-// 1. Register (Composition Root) — .graph for screen-scoped trees, .application for app singletons
+// 1. Register (Composition Root)
 DependencyResolver.shared.register(UserRepositoryProtocol.self, scope: .application) { _ in
     UserRepository()
 }
-DependencyResolver.shared.register(ProfileViewModel.self, scope: .graph) { _ in ProfileViewModel() }
+DependencyResolver.shared.register(ProfileUseCase.self, scope: .graph) { _ in
+    ProfileUseCase()
+}
+DependencyResolver.shared.register(ProfileViewModel.self) { _ in  // .weak
+    ProfileViewModel()
+}
 
-// 2. Types — dependencies via @Autowired, not init parameters
-final class ProfileViewModel: AnyObject {
+// 2. Types
+final class ProfileUseCase {
     @Autowired var repository: UserRepositoryProtocol
 }
 
-final class ProfileViewController: AnyObject {
+final class ProfileViewModel {
+    @Autowired var useCase: ProfileUseCase
+}
+
+final class ProfileViewController {
     @Autowired var viewModel: ProfileViewModel
 }
 
 // 3. Use — resolved on first property access
 let viewController = ProfileViewController()
-let vm = viewController.viewModel  // ProfileViewModel resolved here
-let repo = vm.repository          // UserRepository resolved here
+let vm = viewController.viewModel  // new ProfileViewModel (.weak)
+let repo = vm.useCase.repository   // UserRepository from the tree
+```
+
+### SwiftUI
+
+Do **not** put `@Autowired` on a `View` (struct getters are `mutating` and cannot be read from `body`). Use `@AutowiredState` instead:
+
+```swift
+struct ProfileView: View {
+    @AutowiredState var viewModel: ProfileViewModel
+
+    var body: some View {
+        Text(viewModel.title)
+    }
+}
+
+ProfileView()  // resolves ProfileViewModel once and keeps it in @State
+```
+
+When the ViewModel also uses Observation + `@Autowired`, prefer `@DIObservable` over Observation’s `@Observable`:
+
+```swift
+@DIObservable
+final class ProfileViewModel {
+    @Autowired var useCase: ProfileUseCase
+    var title = ""
+}
 ```
 
 ## Registration
@@ -128,24 +164,31 @@ Use the resolver parameter when the factory calls `r.resolve`. A `() -> Service`
 
 | Scope | Behavior | Typical use |
 |-------|----------|-------------|
-| **`.weak`** (default) | New instance on every `resolve` | Stateless helpers, per-call values; explicit opt-in when omitted |
+| **`.weak`** (default) | New instance on every `resolve` | **ViewModels**, presenters owned by a screen, transient helpers |
 | **`.application`** | Single instance for the lifetime of the resolver (until `initialize()`) | App-wide singletons (API client, settings) |
-| **`.graph`** | One instance per type while the object graph is being built; reused across `@Autowired` / nested `resolve`; weakly cached afterward and recreated when all strong references are gone | View models, presenters, screen-scoped services |
+| **`.graph`** | One instance per type **within one object tree** (a graph session keyed by the owning instance); weakly reused for further `@Autowired` on that same tree while references remain | **UseCase / Repository** shared inside one VM tree — e.g. diamond dependencies |
+
+### Why ViewModels should be `.weak`
+
+A ViewModel is normally **one per screen**. Prefer `.weak` so each resolve creates a new root. Independently, `.graph` is already **isolated per owning tree** (each screen / holder gets its own graph identity), so two `ProfileView`s on a `NavigationStack` do not share UseCase / Repository instances either.
+
+```text
+Stack: Profile(user-1) → VM① → Repo①
+       Profile(user-2) → VM② → Repo②   // separate trees
+```
 
 ### `.weak` (default)
 
 ```swift
-resolver.register(TransientService.self) { _ in TransientService() }
+resolver.register(ProfileViewModel.self) { _ in ProfileViewModel() }
 // same as scope: .weak
 
-let x = resolver.resolve(TransientService.self)
-let y = resolver.resolve(TransientService.self)
+let x = resolver.resolve(ProfileViewModel.self)
+let y = resolver.resolve(ProfileViewModel.self)
 // x !== y, factory runs every time
 ```
 
 > **Naming note:** `.weak` here means *transient* (no instance cache in the container). It is not ARC `weak`. The container only stores the factory closure.
-
-For nested `@Autowired` graphs and shared screen-scoped instances, register with **`.graph`** explicitly.
 
 ### `.application`
 
@@ -159,81 +202,61 @@ let db2 = resolver.resolve(Database.self)
 
 ### `.graph`
 
-Graph scope deduplicates instances in two ways:
+Graph scope deduplicates instances **inside one object tree**:
 
-1. **During a single `resolve` call** — `activeGraphCache` is used while the factory runs (including nested `r.resolve` calls).
-2. **Across `@Autowired` property access** — each first access starts a short graph session, then `weakGraphCache` reuses instances while something in the live object graph still holds them strongly.
+1. **During a single `resolve` / graph session** — nested `r.resolve` calls share via `activeGraphCache`.
+2. **Across `@Autowired` on the same owner (and objects created in that tree)** — each owner has a graph identity; further resolves reuse that tree’s `weakGraphCache` entries while strong references remain.
 
-#### Primary pattern: `@Autowired` + graph registration
+Different owners (two screens, two holders) get **different** graph identities, so they do not share `.graph` instances even while both are alive. This matches Swinject-style “one graph per root,” not a process-wide soft singleton.
 
-Register each type with a simple factory. Wire the tree with **`@Autowired` on each type** — not with `r.resolve` inside factories.
+#### Primary pattern: `@Autowired` + graph under the ViewModel
 
-**Object graph (what you are building):**
+Register shared tree nodes with `.graph`. Keep the screen-owned root (ViewModel / Presenter held by the view) as `.weak`.
+
+**Object graph:**
 
 ```
-ProfilePresenter
-├── useCase: ProfileUseCase          ← @Autowired on Presenter
-│   └── repository: UserRepository   ← @Autowired on UseCase
-└── repository: UserRepository       ← @Autowired on Presenter (second path to the same leaf)
+ProfileViewModel              ← .weak (owned by the screen)
+├── useCase: ProfileUseCase   ← .graph + @Autowired
+│   └── repository: UserRepository   ← .graph
+└── repository: UserRepository       ← same instance (diamond)
 ```
 
-**1. Registration** — factories only create the type itself:
+**1. Registration:**
 
 ```swift
 DependencyResolver.shared.register(UserRepository.self, scope: .graph) { _ in UserRepository() }
 DependencyResolver.shared.register(ProfileUseCase.self, scope: .graph) { _ in ProfileUseCase() }
-DependencyResolver.shared.register(ProfilePresenter.self, scope: .graph) { _ in ProfilePresenter() }
+DependencyResolver.shared.register(ProfileViewModel.self) { _ in ProfileViewModel() }  // .weak
 ```
 
 **2. Types** — each dependency is an `@Autowired` property on the parent:
 
 ```swift
-final class UserRepository: AnyObject { /* ... */ }
+final class UserRepository { /* ... */ }
 
-final class ProfileUseCase: AnyObject {
-    @Autowired var repository: UserRepository   // child → leaf
+final class ProfileUseCase {
+    @Autowired var repository: UserRepository
 }
 
-final class ProfilePresenter: AnyObject {
-    @Autowired var useCase: ProfileUseCase      // parent → child (UseCase is injected here)
-    @Autowired var repository: UserRepository   // parent → leaf (shortcut to the same type)
+final class ProfileViewModel {
+    @Autowired var useCase: ProfileUseCase
+    @Autowired var repository: UserRepository
 }
 ```
 
-Nothing is injected in `init`. `ProfilePresenter` does not receive `ProfileUseCase` as a parameter — it gets `useCase` when you **read** `presenter.useCase`.
-
-**3. Usage** — the graph is resolved lazily when properties are accessed:
+**3. Usage** — the graph under the VM is resolved lazily when properties are accessed:
 
 ```swift
-var presenter = ProfilePresenter()
-// At this point: no DI yet. useCase and repository are not resolved.
+var viewModel = ProfileViewModel()
+// At this point: no DI yet.
 
-// Path A (indirect): Presenter → UseCase → Repository
-let viaUseCase = presenter.useCase.repository
-
-// Path B (direct): Presenter → Repository
-let direct = presenter.repository
-
-// Same UserRepository instance; its factory ran only once.
-// viaUseCase === direct
+let viaUseCase = viewModel.useCase.repository
+let direct = viewModel.repository
+// viaUseCase === direct ; UserRepository factory ran only once
 ```
 
-**What happens step by step for `presenter.useCase.repository`:**
-
-| Step | You read | `@Autowired` resolves |
-|------|----------|------------------------|
-| 1 | `presenter.useCase` | `ProfileUseCase` (created once, cached on `presenter`) |
-| 2 | `.repository` on that use case | `UserRepository` (created once, cached on `useCase`) |
-
-**What happens for `presenter.repository`:**
-
-| Step | You read | Result |
-|------|----------|--------|
-| 3 | `presenter.repository` | Same `UserRepository` as step 2 (graph scope + still held by `useCase`) |
-
-So `ProfileUseCase` enters the graph **only** because `ProfilePresenter` declares `@Autowired var useCase: ProfileUseCase` and you accessed `presenter.useCase`.
-
-Nested graphs (diamond paths, siblings, deeper trees) work the same way: register with `.graph`, declare `@Autowired` on each parent, then read properties. No `r.resolve` inside factories is required.
+Nested graphs (diamond paths, siblings, deeper trees) work the same way below the ViewModel: register with `.graph`, declare `@Autowired` on each parent, then read properties.
 
 When nothing strongly references a graph-scoped instance anymore, the next resolve can create a fresh one.
 
@@ -263,10 +286,10 @@ final class MyViewModel {
 }
 ```
 
-- Resolves from **`DependencyResolver.shared`** on **first** access to `wrappedValue`
-- Caches the result on the owning instance (same property, same instance)
+- Resolves from **`DependencyResolver.shared`** on **first** access
+- Caches the result on the owning instance
 - Wraps each first-time resolve in a **graph session** (`startGraphSession` / `endGraphSession`)
-- Together with **`.graph` registration**, this is how parent/child relationships are formed: reading `parent.child.grandchild` resolves each registered type and shares graph-scoped instances across the tree (via `activeGraphCache` during a session and `weakGraphCache` while strong references exist)
+- Together with **`.graph` registration** on UseCase / Repository, reading `parent.child.grandchild` shares instances across the tree
 
 ```swift
 DependencyResolver.shared.register(HeavyService.self, scope: .graph) { _ in HeavyService() }
@@ -276,36 +299,47 @@ final class MyHolder {
 }
 
 var holder = MyHolder()
-// HeavyService factory not called yet
-
 let service = holder.service  // resolved and cached on this holder
 let again = holder.service    // same instance (property cache)
-
-// Another holder while the first still lives → same graph-scoped HeavyService
-var other = MyHolder()
-let shared = other.service
-// service === shared when the first holder’s service is still strongly reachable
 ```
 
 ### Recommended usage
 
 | Layer | Suggestion |
 |-------|------------|
-| View / ViewController / SwiftUI view | `@Autowired` is fine |
-| ViewModel / UseCase / Repository | Prefer initializer injection for easier unit tests |
+| SwiftUI `View` | `@AutowiredState` (not `@Autowired`) |
+| UIKit `UIViewController` | `@Autowired` for the ViewModel is fine |
+| ViewModel | Prefer `.weak`; `@Autowired` or init injection for deps |
+| UseCase / Repository | `.graph` when shared inside one VM tree; init injection for unit tests |
 | App entry | Register everything on `DependencyResolver.shared` |
 
-`@Autowired` implies a shared resolution root (like most property-wrapper DI). For testable core logic, pass dependencies through `init` and keep the container at the composition root.
+## `@AutowiredState`
+
+SwiftUI counterpart to `@Autowired`: resolves from `shared` inside a graph session and stores the value in `@State`.
+
+```swift
+struct ProfileView: View {
+    @AutowiredState var viewModel: ProfileViewModel
+
+    var body: some View {
+        Text(viewModel.title)
+    }
+}
+```
+
+Use `AutowiredState(wrappedValue:)` only when you need an explicit instance (advanced / manual wiring). Everyday screens just declare the property and call `ProfileView()`.
+
+## `@DIObservable`
+
+Use instead of Observation’s `@Observable` when the same class also has `@Autowired` properties. `@Autowired` members become `@ObservationIgnored`; other stored properties are tracked.
 
 ## Manual resolve
-
-You can resolve without the property wrapper:
 
 ```swift
 let repo = DependencyResolver.shared.resolve(UserRepositoryProtocol.self)
 ```
 
-Use this for one-off construction or when you need a new instance every time with `.weak` scope.
+Use for one-off construction or when you need a new instance every time with `.weak` scope.
 
 ## Clearing the container
 
@@ -328,7 +362,7 @@ testResolver.register(UserRepositoryProtocol.self, scope: .application) { _ in
 let sut = ProfileViewModel(repository: testResolver.resolve(UserRepositoryProtocol.self))
 ```
 
-For code that uses `@Autowired` (bound to `shared`), reset in `setUp` / `tearDown`:
+For code that uses `@Autowired` / `@AutowiredState` (bound to `shared`), reset in `setUp` / `tearDown`:
 
 ```swift
 func setUp() {
@@ -358,7 +392,9 @@ swift test
 | `register(_:scope:factory:)` | Register a type with a factory |
 | `resolve(_:)` | Resolve a registered type |
 | `initialize()` | Clear registrations and all caches |
-| `@Autowired` | Lazy property injection from `shared` |
+| `@Autowired` | Lazy property injection from `shared` (macro) |
+| `@AutowiredState` | SwiftUI state-owned injection from `shared` |
+| `@DIObservable` | Observation macro compatible with `@Autowired` |
 
 ## Comparison with heavier DI frameworks
 
@@ -366,10 +402,29 @@ LightWeightDI intentionally stays minimal:
 
 - No storyboard integration
 - No auto-wiring / reflection
-- No child containers or assembly types
-- Small API surface: register, resolve, three scopes, one property wrapper
+- No child containers, assembly types, or key-path factories
+- Small API surface: register, resolve, three scopes, macros for injection
 
 If you need feature-rich container hierarchies, consider [Swinject](https://github.com/Swinject/Swinject) or [Factory](https://github.com/hmlongco/Factory). LightWeightDI targets projects that want a few hundred lines of DI without pulling in a larger framework.
+
+## Releases
+
+### 0.7.0
+
+- `@Autowired` and `@DIObservable` are now **Swift macros** (Xcode may ask to **Trust & Enable** the macro plugin on first add)
+- Added `@AutowiredState` for SwiftUI (`DynamicProperty` + `@State`)
+- Graph scope is isolated per owning root, so separate screens / navigation entries do not share `.graph` instances
+- Core `DependencyResolver` APIs remain usable without enabling macros
+- **Dropped CocoaPods support** — use Swift Package Manager only
+
+### 0.6.0
+
+- `DependencyResolver` with `register` / `resolve` / `initialize`
+- `@Autowired` property-wrapper injection (lazy, first access)
+- Three scopes: `.weak` (default), `.application`, `.graph`
+- Nested resolution via `(DependencyResolver) -> Service` factories
+- Thread-safe container state
+- CocoaPods distribution (`LightWeightDI.podspec`)
 
 ## License
 

@@ -41,11 +41,24 @@ public struct AutowiredMacro: PeerMacro, AccessorMacro {
         let isStruct = enclosingTypeIsStruct(in: context)
         let mutatingKeyword = isStruct ? "mutating " : ""
 
+        let sessionSetup: String
+        if isStruct {
+            sessionSetup = """
+                resolver.startGraphSession()
+                defer { resolver.endGraphSession() }
+                """
+        } else {
+            sessionSetup = """
+                let graphID = DependencyResolver.graphIdentity(for: self)
+                resolver.startGraphSession(id: graphID)
+                defer { resolver.endGraphSession() }
+                """
+        }
+
         let getterBody = """
             if let cached = \(backingName) { return cached }
             let resolver = DependencyResolver.shared
-            resolver.startGraphSession()
-            defer { resolver.endGraphSession() }
+            \(sessionSetup)
             let resolved = resolver.resolve(\(typeName).self)
             \(backingName) = resolved
             return resolved

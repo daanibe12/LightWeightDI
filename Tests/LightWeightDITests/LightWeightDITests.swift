@@ -42,7 +42,7 @@ struct ScopeVariationTests {
         #expect(a.id == b.id)
     }
 
-    @Test func graphScopeは連続resolveで同じインスタンスを返す() {
+    @Test func graphScopeは連続のトップレベルresolveでは別インスタンス() {
         let resolver = DependencyResolver()
         var callCount = 0
         resolver.register(GreeterRepository.self, scope: .graph) { _ in
@@ -53,8 +53,8 @@ struct ScopeVariationTests {
         let a = resolver.resolve(GreeterRepository.self)
         let b = resolver.resolve(GreeterRepository.self)
 
-        #expect(callCount == 1)
-        #expect(a.id == b.id)
+        #expect(callCount == 2)
+        #expect(a.id != b.id)
     }
 
     @Test func デフォルトスコープはweak() {
@@ -391,7 +391,7 @@ struct DependencyResolverSharedIsolationTests {
             #expect(first.id == second.id)
         }
 
-        @Test func autowiredGraphScopeは別Holder間で同一インスタンスを共有する() {
+        @Test func autowiredGraphScopeは別Holder間では別インスタンス() {
             resetSharedResolver()
             DependencyResolver.shared.register(AutowiredGraphCounter.self, scope: .graph) { _ in
                 AutowiredGraphCounter()
@@ -400,7 +400,7 @@ struct DependencyResolverSharedIsolationTests {
             var holderA = AutowiredGraphHolderA()
             var holderB = AutowiredGraphHolderB()
 
-            #expect(holderA.counter.id == holderB.counter.id)
+            #expect(holderA.counter.id != holderB.counter.id)
         }
 
         @Test func autowiredApplicationScopeはHolder間で同一インスタンスを共有する() {
@@ -427,7 +427,7 @@ struct DependencyResolverSharedIsolationTests {
             #expect(holderA.counter.id != holderB.counter.id)
         }
 
-        @Test func 別親alive中はgraphは共有されweakは毎回別() {
+        @Test func 別親alive中はgraphもweakも別インスタンス() {
             resetSharedResolver()
 
             final class GraphDep: AnyObject { let id = UUID() }
@@ -458,13 +458,13 @@ struct DependencyResolverSharedIsolationTests {
             let weakFromA = weakParentA.dep
             let weakFromB = weakParentB.dep
 
-            #expect(graphCount == 1)
-            #expect(graphFromA === graphFromB)
+            #expect(graphCount == 2)
+            #expect(graphFromA !== graphFromB)
             #expect(weakCount == 2)
             #expect(weakFromA !== weakFromB)
         }
 
-        @Test func graphScopeは親の型が違ってもalive中は同一インスタンス() {
+        @Test func graphScopeは親の型が違っても別ツリーなら別インスタンス() {
             resetSharedResolver()
 
             final class CrossParentDep: AnyObject { let id = UUID() }
@@ -480,8 +480,8 @@ struct DependencyResolverSharedIsolationTests {
             var home = HomeScreen()
             var settings = SettingsScreen()
 
-            #expect(home.dep === settings.dep)
-            #expect(factoryCount == 1)
+            #expect(home.dep !== settings.dep)
+            #expect(factoryCount == 2)
         }
 
         @Test func 別親で前が解放済みならgraphもweakも別インスタンス() {
@@ -529,7 +529,7 @@ struct DependencyResolverSharedIsolationTests {
             #expect(firstWeakID != secondWeakID)
         }
 
-        @Test func autowiredGraphScopeは既存強参照があればweakキャッシュを再利用する() {
+        @Test func autowiredGraphScopeは別Holderでは再利用しない() {
             resetSharedResolver()
             final class ReusableGraphService: AnyObject {
                 let id = UUID()
@@ -548,7 +548,7 @@ struct DependencyResolverSharedIsolationTests {
             var another = ReusableHolder()
             let reused = another.service
 
-            #expect(kept.id == reused.id)
+            #expect(kept.id != reused.id)
         }
 
         @Test func autowiredGraphScopeは全Holder解放後は新インスタンスを生成する() {
@@ -658,7 +658,7 @@ struct DependencyResolverSharedIsolationTests {
     @Suite
     struct GraphVsFactorySharedTests {
 
-        @Test func graphScopeはFactorySharedと同様に連続resolveで同一インスタンス() {
+        @Test func graphScopeの連続トップレベルresolveはFactorySharedと違い別インスタンス() {
             final class SharedService: AnyObject {
                 let id = UUID()
             }
@@ -675,9 +675,9 @@ struct DependencyResolverSharedIsolationTests {
             let graphSecond = resolver.resolve(SharedService.self)
 
             #expect(factoryCounter.count == 1)
-            #expect(graphCounter.count == 1)
             #expect(simFirst === simSecond)
-            #expect(graphFirst === graphSecond)
+            #expect(graphCounter.count == 2)
+            #expect(graphFirst !== graphSecond)
         }
 
         @Test func graphScopeはFactorySharedと同様にfactory内二重resolveで1インスタンス() {
@@ -757,7 +757,7 @@ struct DependencyResolverSharedIsolationTests {
             #expect(graphRoot.left.leaf === graphRoot.right.leaf)
         }
 
-        @Test func graphScopeはFactorySharedと同様に複数Consumerが同一インスタンスを共有() {
+        @Test func graphScopeは別Consumer間では共有せずFactorySharedと異なる() {
             resetSharedResolver()
 
             final class SharedRepo: AnyObject { let id = UUID() }
@@ -790,12 +790,12 @@ struct DependencyResolverSharedIsolationTests {
             let graphB = consumerB.repo
 
             #expect(factoryCounter.count == 1)
-            #expect(graphCounter.count == 1)
             #expect(simA === simB)
-            #expect(graphA === graphB)
+            #expect(graphCounter.count == 2)
+            #expect(graphA !== graphB)
         }
 
-        @Test func graphScopeはFactorySharedと同様に参照保持中は再resolveしても同一() {
+        @Test func graphScopeは参照保持中の再resolveでもトップレベルなら別インスタンス() {
             final class HeldService: AnyObject { let id = UUID() }
 
             let factoryCounter = FactoryCallCounter()
@@ -810,9 +810,9 @@ struct DependencyResolverSharedIsolationTests {
             let graphAgain = resolver.resolve(HeldService.self)
 
             #expect(simHeld === simAgain)
-            #expect(graphHeld === graphAgain)
             #expect(factoryCounter.count == 1)
-            #expect(graphCounter.count == 1)
+            #expect(graphHeld !== graphAgain)
+            #expect(graphCounter.count == 2)
         }
 
         @Test func graphScopeは参照解放後FactorySharedと挙動が異なる() {
@@ -1095,7 +1095,7 @@ struct DependencyResolverSharedIsolationTests {
     @Suite
     struct GraphCacheTests {
 
-        @Test func graphScopeは連続resolveで同一インスタンスを返す() {
+        @Test func graphScopeは連続トップレベルresolveでは別インスタンス() {
             let resolver = DependencyResolver()
             let counter = FactoryCallCounter()
 
@@ -1110,8 +1110,8 @@ struct DependencyResolverSharedIsolationTests {
             let first = resolver.resolve(ActiveCacheTarget.self)
             let second = resolver.resolve(ActiveCacheTarget.self)
 
-            #expect(counter.count == 1)
-            #expect(first === second)
+            #expect(counter.count == 2)
+            #expect(first !== second)
         }
 
         @Test func graphScopeはresolve連鎖中も1インスタンスのみ生成() {
@@ -1142,7 +1142,7 @@ struct DependencyResolverSharedIsolationTests {
             #expect(parent.left === parent.right)
         }
 
-        @Test func graphScopeはAutowired後も別Holderで同一インスタンスを再利用() {
+        @Test func graphScopeはAutowired後も別Holderでは別インスタンス() {
             resetSharedResolver()
             let counter = FactoryCallCounter()
 
@@ -1164,11 +1164,11 @@ struct DependencyResolverSharedIsolationTests {
             var holderB = WeakCacheHolderB()
             let fromB = holderB.target
 
-            #expect(counter.count == 1)
-            #expect(fromA === fromB)
+            #expect(counter.count == 2)
+            #expect(fromA !== fromB)
         }
 
-        @Test func graphScopeは強参照が残る間は再生成しない() {
+        @Test func graphScopeは別Holderがaliveでもツリーが違えば再生成する() {
             resetSharedResolver()
             let counter = FactoryCallCounter()
 
@@ -1190,8 +1190,8 @@ struct DependencyResolverSharedIsolationTests {
             var latecomer = LatecomerHolder()
             let reused = latecomer.target
 
-            #expect(counter.count == 1)
-            #expect(kept === reused)
+            #expect(counter.count == 2)
+            #expect(kept !== reused)
         }
 
         @Test func graphScopeは全参照解放後は新インスタンスを生成() {
@@ -1225,7 +1225,7 @@ struct DependencyResolverSharedIsolationTests {
             #expect(firstID != secondID)
         }
 
-        @Test func graphScopeは2回目のアクセスでもfactoryは1回のみ() {
+        @Test func graphScopeは別Holderへの2回目アクセスでもそれぞれ生成() {
             resetSharedResolver()
             let counter = FactoryCallCounter()
 
@@ -1244,8 +1244,8 @@ struct DependencyResolverSharedIsolationTests {
             var holder2 = LayerHolder()
             let second = holder2.target
 
-            #expect(counter.count == 1)
-            #expect(first === second)
+            #expect(counter.count == 2)
+            #expect(first !== second)
         }
     }
 
@@ -1314,7 +1314,7 @@ struct DependencyResolverSharedIsolationTests {
                 repositoryCount += 1
                 return ProfileScreenRepository()
             }
-            DependencyResolver.shared.register(ProfileScreenViewModel.self, scope: .graph) { r in
+            DependencyResolver.shared.register(ProfileScreenViewModel.self) { r in
                 viewModelCount += 1
                 return ProfileScreenViewModel(repository: r.resolve(ProfileScreenRepository.self))
             }
@@ -1326,6 +1326,54 @@ struct DependencyResolverSharedIsolationTests {
             #expect(viewModelCount == 1)
             #expect(repositoryCount == 1)
             #expect(hosting.rootView.viewModel.title == "profile")
+        }
+    }
+
+    /// NavigationStack のように「前画面が生きたまま次を push」した状態を、所有者を2つ同時に保持して擬似する
+    @Suite
+    struct NavigationStackScopeTests {
+
+        @Test
+        func weakViewModelは前画面がaliveでも別インスタンス() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            DependencyResolver.shared.register(StackScreenRepository.self, scope: .graph) { _ in
+                StackScreenRepository()
+            }
+            DependencyResolver.shared.register(StackScreenViewModel.self) { r in
+                StackScreenViewModel(repository: r.resolve(StackScreenRepository.self))
+            }
+
+            // push 後も pop していない = 両方とも強参照で生存
+            let screen1 = StackScreenHolder()
+            let screen2 = StackScreenHolder()
+            let vm1 = screen1.viewModel
+            let vm2 = screen2.viewModel
+
+            #expect(vm1 !== vm2)
+            #expect(vm1.repository !== vm2.repository)
+        }
+
+        @Test
+        func graphViewModelでも別Holderなら別インスタンス() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            DependencyResolver.shared.register(StackScreenRepository.self, scope: .graph) { _ in
+                StackScreenRepository()
+            }
+            DependencyResolver.shared.register(StackScreenViewModel.self, scope: .graph) { r in
+                StackScreenViewModel(repository: r.resolve(StackScreenRepository.self))
+            }
+
+            let screen1 = StackScreenHolder()
+            let screen2 = StackScreenHolder()
+            let vm1 = screen1.viewModel
+            let vm2 = screen2.viewModel
+
+            #expect(vm1 !== vm2)
+            #expect(vm1.repository !== vm2.repository)
         }
     }
 
@@ -1427,6 +1475,24 @@ private struct ProfileScreen: View {
 
     var body: some View {
         Text(viewModel.title)
+    }
+}
+
+/// NavigationStack 上の1画面相当（前画面も pop せず保持される想定）
+private final class StackScreenHolder {
+    @Autowired var viewModel: StackScreenViewModel
+}
+
+private final class StackScreenRepository {
+    let id = UUID()
+}
+
+private final class StackScreenViewModel {
+    let id = UUID()
+    let repository: StackScreenRepository
+
+    init(repository: StackScreenRepository) {
+        self.repository = repository
     }
 }
 

@@ -2,8 +2,7 @@ import SwiftDiagnostics
 import SwiftSyntax
 import SwiftSyntaxMacros
 
-/// `@DIObservable` with `@Autowired`-aware member attributes.
-/// `@Autowired` properties receive `@ObservationIgnored` so they compose with the `@Autowired` accessor macro.
+/// Macro implementation for `@DIObservable`.
 public struct DIObservableMacro {
     static let moduleName = "Observation"
     static let conformanceName = "Observable"
