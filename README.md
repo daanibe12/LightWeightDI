@@ -3,7 +3,7 @@
 ![macOS](https://img.shields.io/badge/macOS-13+-green)
 ![iOS](https://img.shields.io/badge/iOS-14+-red)
 ![tvOS](https://img.shields.io/badge/tvOS-16+-blue)
-![CocoaPods](https://img.shields.io/badge/CocoaPods-0.6.0-blue)
+![CocoaPods](https://img.shields.io/badge/CocoaPods-0.6.5-blue)
 [![Swift Package Manager](https://img.shields.io/badge/Swift%20Package%20Manager-compatible-brightgreen.svg)](https://github.com/apple/swift-package-manager)
 
 A small, self-contained dependency injection library for Swift on Apple platforms. No third-party runtime dependencies.
@@ -15,7 +15,20 @@ A small, self-contained dependency injection library for Swift on Apple platform
 - **Three scopes** — `.weak` (default), `.application`, and `.graph`
 - **Nested resolution** — factories receive the resolver so dependencies chain through the same container
 - **Thread-safe** — internal `NSRecursiveLock` around container state
-- **Graph scope** — deduplicates instances within a resolve chain and releases them when no strong references remain (unlike a permanent singleton cache)
+- **Graph scope** — deduplicates instances within one object tree (UseCase / Repository diamonds), isolated per owning root so navigation stacks do not collide
+
+## Releases
+
+### 0.6.5
+
+- **Fix:** `.graph` caches are keyed by owner identity, not type name alone
+- Separate screens / holders no longer share UseCase or Repository instances while both stay alive (e.g. `NavigationStack`)
+- Within one owner tree, diamond dependencies still resolve to a single instance
+- Regression tests for stacked-screen isolation
+
+### 0.6.0
+
+- Graph scope, `@Autowired`, and three-scope container API
 
 ## Requirements
 
@@ -36,7 +49,7 @@ A small, self-contained dependency injection library for Swift on Apple platform
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.6.0")
+    .package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.6.5")
 ],
 targets: [
     .target(
@@ -52,7 +65,7 @@ targets: [
 use_frameworks!
 
 target 'YourApp' do
-  pod 'LightWeightDI', '0.6.0'
+  pod 'LightWeightDI', '0.6.5'
 end
 ```
 
@@ -128,9 +141,9 @@ Use the resolver parameter when the factory calls `r.resolve`. A `() -> Service`
 
 | Scope | Behavior | Typical use |
 |-------|----------|-------------|
-| **`.weak`** (default) | New instance on every `resolve` | Stateless helpers, per-call values; explicit opt-in when omitted |
+| **`.weak`** (default) | New instance on every `resolve` | ViewModels / presenters owned by a screen, transient helpers |
 | **`.application`** | Single instance for the lifetime of the resolver (until `initialize()`) | App-wide singletons (API client, settings) |
-| **`.graph`** | One instance per type while the object graph is being built; reused across `@Autowired` / nested `resolve`; weakly cached afterward and recreated when all strong references are gone | View models, presenters, screen-scoped services |
+| **`.graph`** | One instance per type **within one object tree** (session keyed by the owning instance); weakly reused on that same tree while references remain | UseCase / Repository shared inside one screen tree (diamond dependencies) |
 
 ### `.weak` (default)
 
@@ -145,7 +158,7 @@ let y = resolver.resolve(TransientService.self)
 
 > **Naming note:** `.weak` here means *transient* (no instance cache in the container). It is not ARC `weak`. The container only stores the factory closure.
 
-For nested `@Autowired` graphs and shared screen-scoped instances, register with **`.graph`** explicitly.
+For nested `@Autowired` graphs and shared instances **inside one screen tree**, register with **`.graph`** explicitly.
 
 ### `.application`
 
@@ -159,10 +172,17 @@ let db2 = resolver.resolve(Database.self)
 
 ### `.graph`
 
-Graph scope deduplicates instances in two ways:
+Graph scope deduplicates instances **inside one object tree**:
 
-1. **During a single `resolve` call** — `activeGraphCache` is used while the factory runs (including nested `r.resolve` calls).
-2. **Across `@Autowired` property access** — each first access starts a short graph session, then `weakGraphCache` reuses instances while something in the live object graph still holds them strongly.
+1. **During a single `resolve` / graph session** — nested `r.resolve` calls share via `activeGraphCache`.
+2. **Across `@Autowired` on the same owner (and objects created in that tree)** — each class owner gets a graph identity; further resolves reuse that tree’s `weakGraphCache` while strong references remain.
+
+Different owners (two screens, two holders) get **different** graph identities, so they do **not** share `.graph` instances even while both are alive — for example on a `NavigationStack` where the previous screen is still retained.
+
+```text
+Stack: Profile(user-1) → Presenter① → Repo①
+       Profile(user-2) → Presenter② → Repo②   // separate trees
+```
 
 #### Primary pattern: `@Autowired` + graph registration
 
@@ -263,10 +283,10 @@ final class MyViewModel {
 }
 ```
 
-- Resolves from **`DependencyResolver.shared`** on **first** access to `wrappedValue`
+- Resolves from **`DependencyResolver.shared`** on **first** access
 - Caches the result on the owning instance (same property, same instance)
-- Wraps each first-time resolve in a **graph session** (`startGraphSession` / `endGraphSession`)
-- Together with **`.graph` registration**, this is how parent/child relationships are formed: reading `parent.child.grandchild` resolves each registered type and shares graph-scoped instances across the tree (via `activeGraphCache` during a session and `weakGraphCache` while strong references exist)
+- On **class** owners, starts a graph session keyed by that owner’s identity so nested `@Autowired` / `.graph` types share one tree
+- Together with **`.graph` registration**, reading `parent.child.grandchild` shares graph-scoped instances **within that owner’s tree** (not across unrelated screens)
 
 ```swift
 DependencyResolver.shared.register(HeavyService.self, scope: .graph) { _ in HeavyService() }
@@ -281,10 +301,10 @@ var holder = MyHolder()
 let service = holder.service  // resolved and cached on this holder
 let again = holder.service    // same instance (property cache)
 
-// Another holder while the first still lives → same graph-scoped HeavyService
+// Another holder while the first still lives → separate graph tree
 var other = MyHolder()
-let shared = other.service
-// service === shared when the first holder’s service is still strongly reachable
+let otherService = other.service
+// service !== otherService
 ```
 
 ### Recommended usage
@@ -357,6 +377,8 @@ swift test
 | `DependencyResolver()` | Isolated container (tests, modules) |
 | `register(_:scope:factory:)` | Register a type with a factory |
 | `resolve(_:)` | Resolve a registered type |
+| `startGraphSession(id:)` / `endGraphSession()` | Begin / end a graph session for a given owner identity |
+| `graphIdentity(for:)` | Stable graph ID for a class owner |
 | `initialize()` | Clear registrations and all caches |
 | `@Autowired` | Lazy property injection from `shared` |
 
