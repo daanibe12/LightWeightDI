@@ -17,6 +17,12 @@ internal struct WeakBox {
     weak var value: AnyObject?
 }
 
+/// `.graph` cache key: the service type plus the owning tree's identity.
+struct GraphKey: Hashable {
+    let type: ObjectIdentifier
+    let graphID: UUID
+}
+
 private struct DIRegistration {
     let scope: ScopeType
     let factory: (DependencyResolver) -> Any
@@ -25,12 +31,11 @@ private struct DIRegistration {
 public final class DependencyResolver {
     public static let shared = DependencyResolver()
     internal let lock = NSRecursiveLock()
-    private var registrations = [String: DIRegistration]()
+    private var registrations = [ObjectIdentifier: DIRegistration]()
 
-    private var containerCache = [String: Any]()
-    /// `.graph` cache key: `typeName#graphID`.
-    internal var weakGraphCache = [String: WeakBox]()
-    internal var activeGraphCache = [String: Any]()
+    private var containerCache = [ObjectIdentifier: Any]()
+    internal var weakGraphCache = [GraphKey: WeakBox]()
+    internal var activeGraphCache = [GraphKey: Any]()
     fileprivate var activeSessionCount = 0
     fileprivate var graphIDStack = [UUID]()
 
@@ -57,7 +62,9 @@ public final class DependencyResolver {
 
     public func register<Service>(_ type: Service.Type, scope: ScopeType = .weak, factory: @escaping (DependencyResolver) -> Service) {
         lock.lock(); defer { lock.unlock() }
-        registrations[String(describing: type)] = DIRegistration(scope: scope, factory: factory)
+        // Key on the type itself. Its name string drops the module, so two
+        // `Repository` types in different modules would collide.
+        registrations[ObjectIdentifier(type)] = DIRegistration(scope: scope, factory: factory)
     }
 
     /// Start a graph session with a fresh ID.
@@ -85,7 +92,7 @@ public final class DependencyResolver {
 
     public func resolve<Service>(_ type: Service.Type) -> Service {
         lock.lock(); defer { lock.unlock() }
-        let typeKey = String(describing: type)
+        let typeKey = ObjectIdentifier(type)
 
         guard let registration = registrations[typeKey] else {
             fatalError("🚨 LightWeightDI: \(type) が未登録です。")
@@ -138,8 +145,8 @@ public final class DependencyResolver {
         return instance
     }
 
-    private static func graphCacheKey(typeKey: String, graphID: UUID) -> String {
-        "\(typeKey)#\(graphID.uuidString)"
+    private static func graphCacheKey(typeKey: ObjectIdentifier, graphID: UUID) -> GraphKey {
+        GraphKey(type: typeKey, graphID: graphID)
     }
 
     private static func classObject<T>(_ value: T) -> AnyObject? {
