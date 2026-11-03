@@ -28,6 +28,45 @@ private struct DIRegistration {
     let factory: (DependencyResolver) -> Any
 }
 
+/// Graph session for a single resolve chain, passed down the call stack.
+///
+/// This used to live on the resolver as a shared `graphIDStack`, so a session
+/// opened on one thread could be observed by another. Passing it instead of
+/// storing it keeps concurrent resolves on separate trees.
+private struct GraphSession {
+    let graphID: UUID
+    /// Explicit sessions keep their strong cache until `endGraphSession()`.
+    let retainsActiveCache: Bool
+}
+
+/// Thread-local handle to the tree a resolve belongs to.
+///
+/// `@Autowired` installs the owner's ID here for the duration of the resolve
+/// and restores the previous value, so nested `@Autowired` / `r.resolve` calls
+/// stay on the same tree without touching resolver state.
+enum GraphContext {
+    private static let key = "LightWeightDI.graphID"
+
+    static var current: UUID? {
+        get { Thread.current.threadDictionary[key] as? UUID }
+        set {
+            if let newValue {
+                Thread.current.threadDictionary[key] = newValue
+            } else {
+                Thread.current.threadDictionary.removeObject(forKey: key)
+            }
+        }
+    }
+
+    /// Bind this thread to `graphID`, run `body`, then restore the previous ID.
+    static func withGraph<T>(_ graphID: UUID, _ body: () -> T) -> T {
+        let outer = current
+        current = graphID
+        defer { current = outer }
+        return body()
+    }
+}
+
 public final class DependencyResolver {
     public static let shared = DependencyResolver()
     internal let lock = NSRecursiveLock()
@@ -36,8 +75,9 @@ public final class DependencyResolver {
     private var containerCache = [ObjectIdentifier: Any]()
     internal var weakGraphCache = [GraphKey: WeakBox]()
     internal var activeGraphCache = [GraphKey: Any]()
-    fileprivate var activeSessionCount = 0
-    fileprivate var graphIDStack = [UUID]()
+
+    /// Explicit sessions opened by `startGraphSession(id:)`, innermost last.
+    private var activeSessions: [UUID] = []
 
     public init() {}
 
@@ -52,8 +92,7 @@ public final class DependencyResolver {
         containerCache.removeAll()
         weakGraphCache.removeAll()
         activeGraphCache.removeAll()
-        activeSessionCount = 0
-        graphIDStack.removeAll()
+        activeSessions.removeAll()
     }
 
     public func register<Service>(_ type: Service.Type, scope: ScopeType = .weak, factory: @escaping () -> Service) {
@@ -74,23 +113,32 @@ public final class DependencyResolver {
 
     public func startGraphSession(id: UUID) {
         lock.lock(); defer { lock.unlock() }
-        activeSessionCount += 1
-        graphIDStack.append(id)
+        activeSessions.append(id)
     }
 
     public func endGraphSession() {
         lock.lock(); defer { lock.unlock() }
-        activeSessionCount -= 1
-        if !graphIDStack.isEmpty {
-            graphIDStack.removeLast()
-        }
-        if activeSessionCount == 0 {
+        // An extra call is ignored instead of corrupting session state.
+        guard let closed = activeSessions.popLast() else { return }
+        if activeSessions.isEmpty {
             activeGraphCache.removeAll()
-            graphIDStack.removeAll()
+        } else {
+            removeActiveEntries(for: closed)
         }
     }
 
     public func resolve<Service>(_ type: Service.Type) -> Service {
+        let session = openSession()
+        defer { closeSession(session) }
+
+        // Keep the tree visible to factories on this thread so a nested
+        // `r.resolve` inside a factory rejoins the same session.
+        return GraphContext.withGraph(session.graphID) {
+            performResolve(type, session: session)
+        }
+    }
+
+    private func performResolve<Service>(_ type: Service.Type, session: GraphSession) -> Service {
         lock.lock(); defer { lock.unlock() }
         let typeKey = ObjectIdentifier(type)
 
@@ -106,27 +154,13 @@ public final class DependencyResolver {
         }
         if registration.scope == .weak {
             let instance = registration.factory(self) as! Service
-            if let graphID = graphIDStack.last, let object = Self.classObject(instance) {
-                DIGraphIdentity.set(graphID, on: object)
+            if let object = Self.classObject(instance) {
+                DIGraphIdentity.set(session.graphID, on: object)
             }
             return instance
         }
 
-        let startedSession = activeSessionCount == 0
-        if startedSession {
-            activeSessionCount = 1
-            graphIDStack.append(UUID())
-        }
-        defer {
-            if startedSession {
-                activeSessionCount = 0
-                graphIDStack.removeAll()
-                activeGraphCache.removeAll()
-            }
-        }
-
-        let graphID = graphIDStack.last!
-        let key = Self.graphCacheKey(typeKey: typeKey, graphID: graphID)
+        let key = Self.graphCacheKey(typeKey: typeKey, graphID: session.graphID)
 
         if let strongInstance = activeGraphCache[key] as? Service {
             return strongInstance
@@ -139,10 +173,37 @@ public final class DependencyResolver {
         activeGraphCache[key] = instance
         if let object = Self.classObject(instance) {
             weakGraphCache[key] = WeakBox(value: object)
-            DIGraphIdentity.set(graphID, on: object)
+            DIGraphIdentity.set(session.graphID, on: object)
         }
 
         return instance
+    }
+
+    // MARK: - Session lifecycle
+
+    /// Precedence: explicit `startGraphSession(id:)` > ambient `@Autowired` owner > fresh tree.
+    private func openSession() -> GraphSession {
+        lock.lock(); defer { lock.unlock() }
+        if let explicit = activeSessions.last {
+            return GraphSession(graphID: explicit, retainsActiveCache: true)
+        }
+        if let ambient = GraphContext.current {
+            return GraphSession(graphID: ambient, retainsActiveCache: false)
+        }
+        return GraphSession(graphID: UUID(), retainsActiveCache: false)
+    }
+
+    private func closeSession(_ session: GraphSession) {
+        guard !session.retainsActiveCache else { return }
+        lock.lock(); defer { lock.unlock() }
+        // Objects stay reachable through `weakGraphCache` while owners hold them,
+        // so the strong copies can be dropped once the resolve returns.
+        removeActiveEntries(for: session.graphID)
+    }
+
+    private func removeActiveEntries(for graphID: UUID) {
+        guard !activeGraphCache.isEmpty else { return }
+        activeGraphCache = activeGraphCache.filter { $0.key.graphID != graphID }
     }
 
     private static func graphCacheKey(typeKey: ObjectIdentifier, graphID: UUID) -> GraphKey {
@@ -164,10 +225,7 @@ public struct Autowired<Service> {
         mutating get {
             if let cached = cachedValue { return cached }
 
-            let resolver = DependencyResolver.shared
-            resolver.startGraphSession()
-            defer { resolver.endGraphSession() }
-            let resolved = resolver.resolve(Service.self)
+            let resolved = DependencyResolver.shared.resolve(Service.self)
             cachedValue = resolved
             return resolved
         }
@@ -187,11 +245,13 @@ public struct Autowired<Service> {
                 return cached
             }
 
-            let resolver = DependencyResolver.shared
             let graphID = DependencyResolver.graphIdentity(for: object)
-            resolver.startGraphSession(id: graphID)
-            defer { resolver.endGraphSession() }
-            let resolved = resolver.resolve(Service.self)
+
+            // Bind only this thread to the owner's tree, then restore. No resolver
+            // state is mutated, so parallel screens cannot observe each other.
+            let resolved = GraphContext.withGraph(graphID) {
+                DependencyResolver.shared.resolve(Service.self)
+            }
 
             var storage = object[keyPath: storageKeyPath]
             storage.cachedValue = resolved
