@@ -1341,6 +1341,103 @@ struct DependencyResolverSharedIsolationTests {
             #expect(factoryCount == 1)
         }
     }
+
+    // MARK: - SwiftUI View 向けラッパー（`shared` を触るので直列化スイート配下）
+
+    @Suite
+    struct AutowiredObjectTests {
+
+        private func boot() {
+            resetSharedResolver()
+            DependencyResolver.shared.register(ViewGraphRepo.self, scope: .graph) { _ in ViewGraphRepo() }
+            DependencyResolver.shared.register(ViewGraphUseCase.self, scope: .graph) { _ in ViewGraphUseCase() }
+            DependencyResolver.shared.register(ObservableViewModel.self) { _ in ObservableViewModel() }
+            DependencyResolver.shared.register(ObservableRepoHolder.self) { _ in ObservableRepoHolder() }
+        }
+
+        @Test func 同じラッパーからは同一インスタンスを返す() {
+            boot()
+            defer { resetSharedResolver() }
+
+            let wrapper = AutowiredObject<ObservableViewModel>()
+            let first = wrapper.wrappedValue
+            let second = wrapper.wrappedValue
+
+            #expect(first.title == "default")
+            #expect(first === second)
+        }
+
+        @Test func ラッパーごとにgraphツリーが分かれる() {
+            boot()
+            defer { resetSharedResolver() }
+
+            let first = AutowiredObject<ObservableRepoHolder>().wrappedValue.repo
+            let second = AutowiredObject<ObservableRepoHolder>().wrappedValue.repo
+
+            #expect(first !== second)
+        }
+
+        @Test func ラッパー内ではgraph依存が共有される() {
+            boot()
+            defer { resetSharedResolver() }
+
+            let viewModel = AutowiredObject<ObservableViewModel>().wrappedValue
+            #expect(viewModel.useCase.repo === viewModel.useCase.repo)
+        }
+
+        @Test func 明示的に渡したインスタンスはコンテナを通さない() {
+            let manual = ObservableViewModel()
+            manual.title = "manual"
+
+            let wrapper = AutowiredObject(wrappedValue: manual)
+            #expect(wrapper.wrappedValue === manual)
+            #expect(wrapper.wrappedValue.title == "manual")
+        }
+
+        @Test func projectValueはBindingを提供する() {
+            boot()
+            defer { resetSharedResolver() }
+
+            let wrapper = AutowiredObject<ObservableViewModel>()
+            wrapper.projectedValue.title.wrappedValue = "changed"
+            #expect(wrapper.wrappedValue.title == "changed")
+        }
+
+        @Test func applicationスコープはラッパー間で共有される() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+            DependencyResolver.shared.register(ObservableCounter.self, scope: .application) { _ in
+                ObservableCounter()
+            }
+
+            let first = AutowiredObject<ObservableCounter>().wrappedValue
+            let second = AutowiredObject<ObservableCounter>().wrappedValue
+            #expect(first === second)
+        }
+    }
+}
+
+// MARK: - SwiftUI ラッパーテスト用の型
+
+private final class ViewGraphRepo: AnyObject {
+    let id = UUID()
+}
+
+private final class ViewGraphUseCase: AnyObject {
+    @Autowired var repo: ViewGraphRepo
+}
+
+private final class ObservableViewModel: ObservableObject {
+    @Published var title = "default"
+    @Autowired var useCase: ViewGraphUseCase
+}
+
+private final class ObservableRepoHolder: ObservableObject {
+    @Autowired var repo: ViewGraphRepo
+}
+
+private final class ObservableCounter: ObservableObject {
+    @Published var count = 0
 }
 
 /// NavigationStack 上の1画面相当（前画面も pop せず保持される想定）
