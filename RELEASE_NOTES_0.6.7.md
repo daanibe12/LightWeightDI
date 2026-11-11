@@ -1,4 +1,4 @@
-# LightWeightDI 0.7.0
+# LightWeightDI 0.6.7
 
 ## Summary
 
@@ -24,9 +24,11 @@ struct ProfileView: View {
 }
 ```
 
-`@Autowired` alone cannot be used on a `View`: a struct's property wrapper needs a `mutating` getter, which `body` cannot call. `@AutowiredObject` keeps the instance in `@State` instead, so it lives as long as the view. `$viewModel` produces a `Binding`.
+`@Autowired` alone cannot be used on a `View`: a struct's property wrapper needs a `mutating` getter, which `body` cannot call. `@AutowiredObject` holds the instance in `@StateObject`, so the view owns it, resolves it once per view identity, and subscribes to `objectWillChange` so `@Published` changes redraw the body. `$viewModel` produces a `Binding`.
 
-Resolution is lazy on first access, and one wrapper always returns the same instance.
+It works with `.weak` scope: because resolution happens once per view identity, a transient registration is enough. Use `.graph` for the dependencies the view model shares within its own tree.
+
+To share one view model with child views, create it at the root and pass it down with `.environmentObject`; this is distribution, not injection.
 
 ## What's fixed
 
@@ -44,7 +46,7 @@ Keys are now `ObjectIdentifier(type)`. Graph caches use a `GraphKey` struct (typ
 
 The graph session lived on the resolver as a shared `graphIDStack`. A session opened on one thread could be observed by another, so resolving from a background task joined the wrong tree and shared an instance with an unrelated screen. Measured against the previous build:
 
-| | 0.6.5 | 0.7.0 |
+| | 0.6.5 | 0.6.7 |
 |---|---|---|
 | Instances bound to the wrong tree (200 concurrent resolves) | 97 | 0 |
 | Diamond sharing inside one tree (100 concurrent runs) | 19 | 100 |
@@ -86,7 +88,7 @@ Behaviour changes in two cases:
 Swift Package Manager only.
 
 ```swift
-.package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.7.0")
+.package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.6.7")
 ```
 
-CocoaPods support was removed in 0.7.0. The `LightWeightDI.podspec` is no longer published. Projects using CocoaPods should either migrate to Swift Package Manager or stay on 0.6.5.
+CocoaPods support was removed in 0.6.7. The `LightWeightDI.podspec` is no longer published. Projects using CocoaPods should either migrate to Swift Package Manager or stay on 0.6.5.

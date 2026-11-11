@@ -19,7 +19,7 @@ A small, self-contained dependency injection library for Swift on Apple platform
 
 ## Releases
 
-### 0.7.0
+### 0.6.7
 
 - **New:** `@AutowiredObject` — inject an `ObservableObject` view model into a SwiftUI `View`
 - **Fix:** registrations and caches are keyed by `ObjectIdentifier`, so two types with the same name in different modules no longer collide
@@ -57,7 +57,7 @@ LightWeightDI is distributed through Swift Package Manager.
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.7.0")
+    .package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.6.7")
 ],
 targets: [
     .target(
@@ -67,7 +67,7 @@ targets: [
 ]
 ```
 
-> **CocoaPods is not supported as of 0.7.0.** Use Swift Package Manager.
+> **CocoaPods is not supported as of 0.6.7.** Use Swift Package Manager.
 
 ## Quick start
 
@@ -340,10 +340,15 @@ struct ProfileView: View {
 }
 ```
 
-- Resolves from **`DependencyResolver.shared`** on first access
-- Keeps the instance in `@State`, so it lives as long as the view
+- Resolves from **`DependencyResolver.shared`** once per view identity, via `@StateObject`
+- The view **owns** the instance, so it lives as long as the view
+- Subscribes to `objectWillChange`, so `@Published` changes redraw the body
 - `$viewModel.title` gives a `Binding`
-- Changes publish automatically through `ObservableObject`
+- Works with `.weak` scope: resolution happens once, so a transient registration is enough
+
+> **Sharing a view model with child views** is a distribution problem, not a DI problem. Create one instance at the root and pass it down with `.environmentObject` / `.environment`; `@AutowiredObject` gives each view its own instance.
+
+> **Note:** `StateObject` evaluates its autoclosure when SwiftUI renders, not when the wrapper is constructed. Reading `wrappedValue` outside a rendered view (unit tests, plain functions) therefore does not get the memoization a view does. Test the resolved value and the `projectedValue` type, not instance identity.
 
 Pass an explicit instance when you want to bypass the container (previews, tests):
 
