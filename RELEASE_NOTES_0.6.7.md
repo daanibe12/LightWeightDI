@@ -2,11 +2,12 @@
 
 ## Summary
 
-Adds `@AutowiredObject` for SwiftUI, and fixes two defects in the container: type-name collisions across modules, and graph sessions leaking between concurrent resolves. CocoaPods support is removed; the package is distributed through Swift Package Manager only.
+Single release since **0.6.0** (the last published tag). It adds `@AutowiredObject` for SwiftUI, folds in graph isolation fixes that were prepared as 0.6.5 but never tagged, fixes type-key collisions and concurrent graph session leaks, and removes CocoaPods (SPM only).
 
 ## What's new
 
 ### `@AutowiredObject`
+
 Inject an `ObservableObject` view model into a SwiftUI `View`.
 
 ```swift
@@ -30,7 +31,21 @@ It works with `.weak` scope: because resolution happens once per view identity, 
 
 To share one view model with child views, create it at the root and pass it down with `.environmentObject`; this is distribution, not injection.
 
-## What's fixed
+For `@Observable` view models (iOS 17+), keep `@ObservationIgnored @Autowired` on dependencies and resolve the view model in the view with `init` + `@State` (see README).
+
+## What's fixed (since 0.6.0)
+
+### `.graph` scoped to each owner tree
+
+In **0.6.0**, graph caches used the type name only. Two screens alive at once (for example `NavigationStack` without pop) could share the same UseCase / Repository.
+
+**0.6.7** gives each class owner a stable graph identity and keys graph caches by **type + tree ID** (`GraphKey`). Within one owner, diamond dependencies still deduplicate; across owners, instances stay isolated.
+
+| Scenario | 0.6.0 | 0.6.7 |
+|----------|-------|-------|
+| Same screen, diamond dependency | Shared (correct) | Shared (correct) |
+| Two screens alive at once | Shared (bug) | Isolated per screen |
+| Top-level consecutive `resolve` (no shared owner) | Separate | Separate |
 
 ### Type-name collisions
 
@@ -40,13 +55,13 @@ Registrations and caches were keyed by `String(describing: type)`. That string d
 Could not cast value of type 'ModuleB.Repository' to 'ModuleA.Repository'
 ```
 
-Keys are now `ObjectIdentifier(type)`. Graph caches use a `GraphKey` struct (type + tree ID) instead of a `"typeName#graphID"` string.
+Keys are now `ObjectIdentifier(type)`.
 
 ### Graph sessions leaking across concurrent resolves
 
-The graph session lived on the resolver as a shared `graphIDStack`. A session opened on one thread could be observed by another, so resolving from a background task joined the wrong tree and shared an instance with an unrelated screen. Measured against the previous build:
+The graph session lived on the resolver as a shared `graphIDStack`. A session opened on one thread could be observed by another, so resolving from a background task joined the wrong tree and shared an instance with an unrelated screen. Measured against **0.6.0**:
 
-| | 0.6.5 | 0.6.7 |
+| | 0.6.0 | 0.6.7 |
 |---|---|---|
 | Instances bound to the wrong tree (200 concurrent resolves) | 97 | 0 |
 | Diamond sharing inside one tree (100 concurrent runs) | 19 | 100 |
@@ -57,20 +72,25 @@ Sessions are now passed down the call stack, and `@Autowired` binds its owner's 
 
 Calling it without a matching `startGraphSession()` corrupted the session count and later trapped on `graphIDStack.last!`. Extra calls are now ignored.
 
+## Who should upgrade
+
+Anyone on **0.6.0** who uses `.graph` with multiple concurrent screens, presenters, or holders (especially navigation stacks), resolves from background tasks, or registers the same type name in more than one module.
+
 ## Upgrade notes
 
-Source compatible. No public API was removed or renamed.
+Source compatible. No public API was removed or renamed (except dropping the unpublished CocoaPods podspec).
 
-Behaviour changes in two cases:
+Behaviour changes:
 
-1. **Concurrent `.graph` resolution now isolates properly.** The old sharing was unintentional. Code that happened to rely on state being shared between screens will see separate instances.
-2. **`startGraphSession(id:)` and `@Autowired` now agree.** Previously `@Autowired` ignored an explicit session and assigned its own ID. It now uses the open session. Projects that open a session in test `setUp` will see it take effect for the first time.
+1. **Separate screens no longer share `.graph` instances by accident** (owner-scoped graph + concurrent isolation).
+2. **Concurrent `.graph` resolution** no longer borrows another screen's tree unintentionally.
+3. **`startGraphSession(id:)` and `@Autowired` now agree.** An open explicit session takes precedence over the owner's graph ID.
 
 `@Autowired` still resolves from `DependencyResolver.shared`, and `initialize()` still does not clear values already cached on an instance.
 
 ### Breaking change: CocoaPods
 
-`LightWeightDI.podspec` has been removed. CocoaPods users must migrate to Swift Package Manager or remain on 0.6.5.
+`LightWeightDI.podspec` has been removed. CocoaPods users must migrate to Swift Package Manager or **pin the last CocoaPods release (0.6.0 tag)**.
 
 ## Platform support
 
@@ -81,7 +101,7 @@ Behaviour changes in two cases:
 | tvOS | 16.0+ |
 | Swift | 5.9+ |
 
-`@AutowiredObject` is available wherever SwiftUI is. `@Observable` support (used with `@State` + `resolve`) requires iOS 17+ / macOS 14+ / tvOS 17+.
+`@AutowiredObject` is available wherever SwiftUI is. `@Observable` view models (iOS 17+) use `init` + `@State` in the view; see README.
 
 ## Install
 
@@ -90,5 +110,3 @@ Swift Package Manager only.
 ```swift
 .package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.6.7")
 ```
-
-CocoaPods support was removed in 0.6.7. The `LightWeightDI.podspec` is no longer published. Projects using CocoaPods should either migrate to Swift Package Manager or stay on 0.6.5.

@@ -21,18 +21,14 @@ A small, self-contained dependency injection library for Swift on Apple platform
 
 ### 0.6.7
 
+Ships all changes since the last tag **0.6.0** (there was no **0.6.5** release).
+
 - **New:** `@AutowiredObject` — inject an `ObservableObject` view model into a SwiftUI `View`
-- **Fix:** registrations and caches are keyed by `ObjectIdentifier`, so two types with the same name in different modules no longer collide
-- **Fix:** graph sessions are no longer held on the resolver as a shared stack. Resolving from a background task previously joined the wrong tree and shared an instance with an unrelated screen; sessions now travel with the call
+- **Fix:** `.graph` is keyed by owner identity (`GraphKey`: type + tree ID), so separate screens / holders do not share UseCase or Repository while both stay alive (`NavigationStack`, and similar); diamonds inside one owner still deduplicate
+- **Fix:** registrations and caches use `ObjectIdentifier(type)`, so two types with the same name in different modules no longer collide
+- **Fix:** graph sessions are no longer held on the resolver as a shared stack; background resolves no longer join another screen's tree
 - **Fix:** `endGraphSession()` with no matching `startGraphSession()` is ignored instead of trapping
-- Graph caches use a `GraphKey` (type + tree ID) instead of a `"typeName#graphID"` string
-
-### 0.6.5
-
-- **Fix:** `.graph` caches are keyed by owner identity, not type name alone
-- Separate screens / holders no longer share UseCase or Repository instances while both stay alive (e.g. `NavigationStack`)
-- Within one owner tree, diamond dependencies still resolve to a single instance
-- Regression tests for stacked-screen isolation
+- **Breaking:** CocoaPods removed — SPM only (pin **0.6.0** if you must stay on CocoaPods)
 
 ### 0.6.0
 
@@ -372,11 +368,17 @@ final class ProfileViewModel {
 
 `@Observable` turns every stored property into a tracked one, which conflicts with the property wrapper. `@ObservationIgnored` opts it out. This is required by Observation itself, not by this library — Factory's `@Injected` has the same requirement.
 
-For the view, use the standard SwiftUI pattern:
+For the view, resolve in `init` and store in `@State` (do **not** use `@State private var vm = resolve()` as a default; that re-runs whenever the parent recreates the struct):
 
 ```swift
 struct ProfileView: View {
-    @State private var viewModel = DependencyResolver.shared.resolve(ProfileViewModel.self)
+    @State private var viewModel: ProfileViewModel
+
+    init() {
+        _viewModel = State(
+            initialValue: DependencyResolver.shared.resolve(ProfileViewModel.self)
+        )
+    }
 
     var body: some View {
         List(viewModel.users) { Text($0.name) }
@@ -390,7 +392,7 @@ struct ProfileView: View {
 |-----------|-----|
 | UIKit `ViewController`, `ViewModel`, `UseCase` | `@Autowired` |
 | SwiftUI `View` + `ObservableObject` view model | `@AutowiredObject` |
-| SwiftUI `View` + `@Observable` view model | `@State` + `resolve` |
+| SwiftUI `View` + `@Observable` view model | `init` + `@State`, or pass `viewModel` from the parent |
 | Plain `struct` (not a view) | Initializer injection |
 
 ## Manual resolve
@@ -469,7 +471,7 @@ LightWeightDI intentionally stays minimal:
 - No auto-wiring / reflection
 - No child containers or assembly types
 - No Swift macros, so there is no `swift-syntax` dependency and no Xcode "Trust & Enable" prompt
-- Small API surface: register, resolve, three scopes, two property wrappers
+- Small API surface: register, resolve, three scopes, property wrappers for UIKit and SwiftUI
 
 If you need feature-rich container hierarchies, consider [Swinject](https://github.com/Swinject/Swinject) or [Factory](https://github.com/hmlongco/Factory). LightWeightDI targets projects that want a few hundred lines of DI without pulling in a larger framework.
 
