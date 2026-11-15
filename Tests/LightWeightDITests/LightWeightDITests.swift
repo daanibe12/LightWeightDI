@@ -1,6 +1,15 @@
 import Testing
 @testable import LightWeightDI
 import Foundation
+#if canImport(SwiftUI)
+import SwiftUI
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+#if canImport(Observation)
+import Observation
+#endif
 
 
 // MARK: - スコープ別テスト
@@ -276,10 +285,58 @@ private final class LockedCounter: @unchecked Sendable {
     }
 }
 
+private final class LockedObjectIdentifierBag: @unchecked Sendable {
+    private var lock = NSLock()
+    private var identifiers: [ObjectIdentifier] = []
+
+    func append(_ id: ObjectIdentifier) {
+        lock.lock(); defer { lock.unlock() }
+        identifiers.append(id)
+    }
+
+    var count: Int {
+        lock.lock(); defer { lock.unlock() }
+        return identifiers.count
+    }
+
+    var uniqueCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return Set(identifiers).count
+    }
+}
+
 /// shared を使うテストの前に呼び、並行実行によるキャッシュ汚染を防ぐ
 private func resetSharedResolver() {
     DependencyResolver.shared.initialize()
+    GraphContext.current = nil
 }
+
+#if canImport(SwiftUI) && canImport(AppKit)
+@MainActor
+private func withHostedView<V: View>(_ view: V, _ body: (NSHostingView<V>) -> Void) {
+    if NSApplication.shared.windows.isEmpty {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+    let hosting = NSHostingView(rootView: view)
+    hosting.frame = CGRect(x: 0, y: 0, width: 200, height: 200)
+    let window = NSWindow(
+        contentRect: hosting.frame,
+        styleMask: [.borderless],
+        backing: .buffered,
+        defer: false
+    )
+    window.contentView = hosting
+    window.makeKeyAndOrderFront(nil)
+    hosting.layoutSubtreeIfNeeded()
+    hosting.displayIfNeeded()
+    for _ in 0 ..< 5 {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+    }
+    body(hosting)
+    window.orderOut(nil)
+}
+#endif
 
 // MARK: - @Autowired バリエーション
 
@@ -1242,6 +1299,301 @@ struct DependencyResolverSharedIsolationTests {
         }
     }
 
+    // MARK: - 明示 graph セッション API
+
+    @Suite
+    struct GraphExplicitSessionTests {
+
+        @Test func startなしでendGraphSessionを余分に呼んでも落ちずAutowiredが動く() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var factoryCount = 0
+            DependencyResolver.shared.register(ExplicitSessionLeaf.self, scope: .graph) { _ in
+                factoryCount += 1
+                return ExplicitSessionLeaf()
+            }
+
+            DependencyResolver.shared.endGraphSession()
+            DependencyResolver.shared.endGraphSession()
+            DependencyResolver.shared.endGraphSession()
+
+            _ = ExplicitSessionHolderA().leaf
+
+            #expect(factoryCount == 1)
+        }
+
+        @Test func 明示セッション中はresolveが同一graphIDを共有する() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var factoryCount = 0
+            DependencyResolver.shared.register(ExplicitSessionLeaf.self, scope: .graph) { _ in
+                factoryCount += 1
+                return ExplicitSessionLeaf()
+            }
+
+            let sessionID = UUID()
+            DependencyResolver.shared.startGraphSession(id: sessionID)
+            defer { DependencyResolver.shared.endGraphSession() }
+
+            let a = DependencyResolver.shared.resolve(ExplicitSessionLeaf.self)
+            let b = DependencyResolver.shared.resolve(ExplicitSessionLeaf.self)
+
+            #expect(factoryCount == 1)
+            #expect(a === b)
+        }
+
+        @Test func 明示セッション中の異なるAutowired所有者も同一ツリーを共有する() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var factoryCount = 0
+            DependencyResolver.shared.register(ExplicitSessionLeaf.self, scope: .graph) { _ in
+                factoryCount += 1
+                return ExplicitSessionLeaf()
+            }
+
+            DependencyResolver.shared.startGraphSession(id: UUID())
+            defer { DependencyResolver.shared.endGraphSession() }
+
+            let holderA = ExplicitSessionHolderA()
+            let holderB = ExplicitSessionHolderB()
+            let fromA = holderA.leaf
+            let fromB = holderB.leaf
+
+            #expect(factoryCount == 1)
+            #expect(fromA === fromB)
+        }
+
+        @Test func ネストした明示セッションは内側のIDを優先する() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var factoryCount = 0
+            DependencyResolver.shared.register(ExplicitSessionLeaf.self, scope: .graph) { _ in
+                factoryCount += 1
+                return ExplicitSessionLeaf()
+            }
+
+            let outer = UUID()
+            let inner = UUID()
+            DependencyResolver.shared.startGraphSession(id: outer)
+            let outerLeaf = DependencyResolver.shared.resolve(ExplicitSessionLeaf.self)
+
+            DependencyResolver.shared.startGraphSession(id: inner)
+            let innerFirst = DependencyResolver.shared.resolve(ExplicitSessionLeaf.self)
+            let innerSecond = DependencyResolver.shared.resolve(ExplicitSessionLeaf.self)
+            DependencyResolver.shared.endGraphSession()
+
+            let outerAgain = DependencyResolver.shared.resolve(ExplicitSessionLeaf.self)
+            DependencyResolver.shared.endGraphSession()
+
+            #expect(factoryCount == 2)
+            #expect(innerFirst === innerSecond)
+            #expect(innerFirst !== outerLeaf)
+            #expect(outerAgain === outerLeaf)
+        }
+
+        @Test func 明示セッション終了後は通常のAutowiredが別ツリーになる() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var factoryCount = 0
+            DependencyResolver.shared.register(ExplicitSessionLeaf.self, scope: .graph) { _ in
+                factoryCount += 1
+                return ExplicitSessionLeaf()
+            }
+
+            DependencyResolver.shared.startGraphSession(id: UUID())
+            let duringSession = ExplicitSessionHolderA().leaf
+            DependencyResolver.shared.endGraphSession()
+
+            let afterEnd = ExplicitSessionHolderB().leaf
+
+            #expect(factoryCount == 2)
+            #expect(duringSession !== afterEnd)
+        }
+
+        @Test func factory内のネストresolveは明示セッションのgraphを共有する() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var leafFactoryCount = 0
+            DependencyResolver.shared.register(ExplicitSessionLeaf.self, scope: .graph) { _ in
+                leafFactoryCount += 1
+                return ExplicitSessionLeaf()
+            }
+            DependencyResolver.shared.register(ExplicitSessionPair.self, scope: .graph) { r in
+                ExplicitSessionPair(
+                    left: r.resolve(ExplicitSessionLeaf.self),
+                    right: r.resolve(ExplicitSessionLeaf.self)
+                )
+            }
+
+            DependencyResolver.shared.startGraphSession(id: UUID())
+            defer { DependencyResolver.shared.endGraphSession() }
+
+            let pair = DependencyResolver.shared.resolve(ExplicitSessionPair.self)
+
+            #expect(leafFactoryCount == 1)
+            #expect(pair.left === pair.right)
+        }
+    }
+
+    // MARK: - weak VM + graph Repo の分離（深掘り用）
+
+    @Suite
+    struct GraphWeakVMIsolationProbeTests {
+
+        private func bootWeakVM(
+            repoCounter: FactoryCallCounter,
+            vmCounter: FactoryCallCounter
+        ) {
+            resetSharedResolver()
+            DependencyResolver.shared.register(StackScreenRepository.self, scope: .graph) { _ in
+                repoCounter.track { StackScreenRepository() }
+            }
+            DependencyResolver.shared.register(StackScreenViewModel.self, scope: .weak) { r in
+                vmCounter.track {
+                    StackScreenViewModel(repository: r.resolve(StackScreenRepository.self))
+                }
+            }
+        }
+
+        @Test func holder100個はそれぞれ別のgraphIdentityを持つ() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var ids = Set<UUID>()
+            for _ in 0 ..< 100 {
+                let holder = StackScreenHolder()
+                ids.insert(DependencyResolver.graphIdentity(for: holder))
+            }
+            #expect(ids.count == 100)
+        }
+
+        @Test func weakVMでも画面3つならRepositoryは別() {
+            let repoCounter = FactoryCallCounter()
+            let vmCounter = FactoryCallCounter()
+            bootWeakVM(repoCounter: repoCounter, vmCounter: vmCounter)
+            defer { resetSharedResolver() }
+
+            let a = StackScreenHolder().viewModel.repository
+            let b = StackScreenHolder().viewModel.repository
+            let c = StackScreenHolder().viewModel.repository
+
+            #expect(repoCounter.count == 3)
+            #expect(vmCounter.count == 3)
+            #expect(a !== b)
+            #expect(b !== c)
+        }
+
+        @Test func 明示セッションが開いている間はweakVMでもRepoが全Holderで共有される() {
+            let repoCounter = FactoryCallCounter()
+            let vmCounter = FactoryCallCounter()
+            bootWeakVM(repoCounter: repoCounter, vmCounter: vmCounter)
+            defer { resetSharedResolver() }
+
+            DependencyResolver.shared.startGraphSession(id: UUID())
+            defer { DependencyResolver.shared.endGraphSession() }
+
+            let a = StackScreenHolder().viewModel.repository
+            let b = StackScreenHolder().viewModel.repository
+
+            #expect(vmCounter.count == 2)
+            #expect(repoCounter.count == 1)
+            #expect(a === b)
+        }
+
+        @Test func weakVM直列100ではRepositoryが画面ごとに別() {
+            let repoCounter = FactoryCallCounter()
+            let vmCounter = FactoryCallCounter()
+            bootWeakVM(repoCounter: repoCounter, vmCounter: vmCounter)
+            defer { resetSharedResolver() }
+
+            var repos: [StackScreenRepository] = []
+            repos.reserveCapacity(100)
+            for _ in 0 ..< 100 {
+                repos.append(StackScreenHolder().viewModel.repository)
+            }
+
+            let unique = Set(repos.map { ObjectIdentifier($0) }).count
+            // 期待動作: 画面ごとに別 Repo（2画面テストと同じ）。崩れるときは unique=1, repoFactoryCount=1 になりやすい。
+            #expect(vmCounter.count == 100)
+            #expect(repoCounter.count == 100)
+            #expect(unique == 100)
+        }
+    }
+
+    // MARK: - graph 並行分離（旧混線バグの回帰）
+
+    @Suite
+    struct GraphConcurrencyIsolationTests {
+
+        @Test func 直列に100画面を作ればgraphのRepositoryは全部別() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var repoFactoryCount = 0
+            DependencyResolver.shared.register(StackScreenRepository.self, scope: .graph) { _ in
+                repoFactoryCount += 1
+                return StackScreenRepository()
+            }
+            DependencyResolver.shared.register(StackScreenViewModel.self, scope: .graph) { r in
+                StackScreenViewModel(repository: r.resolve(StackScreenRepository.self))
+            }
+
+            var repos: [StackScreenRepository] = []
+            repos.reserveCapacity(100)
+            for _ in 0 ..< 100 {
+                let screen = StackScreenHolder()
+                repos.append(screen.viewModel.repository)
+            }
+
+            #expect(repoFactoryCount == 100)
+            #expect(Set(repos.map { ObjectIdentifier($0) }).count == 100)
+        }
+
+        @Test func 並行でも画面内の菱形graphは共有される() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var repoFactoryCount = 0
+            DependencyResolver.shared.register(BugUserRepository.self, scope: .graph) { _ in
+                repoFactoryCount += 1
+                return BugUserRepository()
+            }
+            DependencyResolver.shared.register(BugProfileUseCase.self, scope: .graph) { _ in
+                BugProfileUseCase()
+            }
+            DependencyResolver.shared.register(BugProfilePresenter.self, scope: .graph) { _ in
+                BugProfilePresenter()
+            }
+
+            let diamondOK = LockedCounter()
+            let group = DispatchGroup()
+
+            for _ in 0 ..< 100 {
+                group.enter()
+                DispatchQueue.global().async {
+                    GraphContext.current = nil
+                    let screen = BugProfileScreen()
+                    let viaUseCase = screen.presenter.useCase.repository
+                    let direct = screen.presenter.repository
+                    if viaUseCase === direct {
+                        diamondOK.increment()
+                    }
+                    group.leave()
+                }
+            }
+            group.wait()
+
+            #expect(repoFactoryCount == 100)
+            #expect(diamondOK.value == 100)
+        }
+    }
+
     /// 旧バグ: `.graph` が型名だけでキーされ、別画面が同時に生きていても同じインスタンスを共有していた
     @Suite
     struct GraphOwnerIsolationBugTests {
@@ -1341,6 +1693,272 @@ struct DependencyResolverSharedIsolationTests {
             #expect(factoryCount == 1)
         }
     }
+
+    // MARK: - SwiftUI View 向けラッパー（`shared` を触るので直列化スイート配下）
+
+    @Suite
+    struct AutowiredObjectTests {
+
+        private func boot() {
+            resetSharedResolver()
+            DependencyResolver.shared.register(ViewGraphRepo.self, scope: .graph) { _ in ViewGraphRepo() }
+            DependencyResolver.shared.register(ViewGraphUseCase.self, scope: .graph) { _ in ViewGraphUseCase() }
+            DependencyResolver.shared.register(ObservableViewModel.self) { _ in ObservableViewModel() }
+            DependencyResolver.shared.register(ObservableRepoHolder.self) { _ in ObservableRepoHolder() }
+        }
+
+        @Test func 登録した型を解決する() {
+            boot()
+            defer { resetSharedResolver() }
+
+            let wrapper = AutowiredObject<ObservableViewModel>()
+            #expect(wrapper.wrappedValue.title == "default")
+        }
+
+        @Test func レンダリング外ではラッパーごとに別インスタンスになる() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var vmFactoryCount = 0
+            DependencyResolver.shared.register(ObservableViewModel.self, scope: .weak) { _ in
+                vmFactoryCount += 1
+                return ObservableViewModel()
+            }
+
+            let first = AutowiredObject<ObservableViewModel>().wrappedValue
+            let second = AutowiredObject<ObservableViewModel>().wrappedValue
+
+            #expect(vmFactoryCount == 2)
+            #expect(first !== second)
+        }
+
+        #if canImport(SwiftUI) && canImport(AppKit)
+        @Test @MainActor
+        func レンダリング時にラッパーごとにgraphツリーが分かれる() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var repoFactoryCount = 0
+            DependencyResolver.shared.register(ViewGraphRepo.self, scope: .graph) { _ in
+                repoFactoryCount += 1
+                return ViewGraphRepo()
+            }
+            DependencyResolver.shared.register(ObservableRepoHolder.self, scope: .weak) { _ in
+                ObservableRepoHolder()
+            }
+
+            RepoHolderRenderCapture.repos = []
+
+            withHostedView(RepoHolderRenderView()) { _ in }
+            withHostedView(RepoHolderRenderView()) { _ in }
+
+            #expect(repoFactoryCount == 2)
+            #expect(RepoHolderRenderCapture.repos.count == 2)
+            if RepoHolderRenderCapture.repos.count == 2 {
+                #expect(RepoHolderRenderCapture.repos[0] !== RepoHolderRenderCapture.repos[1])
+            }
+        }
+
+        @Test @MainActor
+        func レンダリング時に同一ViewModel内でgraph依存が共有される() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var repoFactoryCount = 0
+            DependencyResolver.shared.register(ViewGraphRepo.self, scope: .graph) { _ in
+                repoFactoryCount += 1
+                return ViewGraphRepo()
+            }
+            DependencyResolver.shared.register(ViewGraphUseCase.self, scope: .graph) { _ in
+                ViewGraphUseCase()
+            }
+            DependencyResolver.shared.register(ObservableDiamondViewModel.self, scope: .weak) { _ in
+                ObservableDiamondViewModel()
+            }
+
+            DiamondGraphRenderCapture.reset()
+
+            withHostedView(DiamondGraphRenderView()) { _ in }
+
+            #expect(DiamondGraphRenderCapture.repoA === DiamondGraphRenderCapture.repoB)
+            #expect(repoFactoryCount == 1)
+        }
+
+        @Test @MainActor
+        func Published変更でbodyが再描画される() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            DependencyResolver.shared.register(ObservableViewModel.self, scope: .weak) { _ in
+                ObservableViewModel()
+            }
+
+            PublishedRedrawCounter.count = 0
+
+            withHostedView(PublishedRedrawView()) { _ in
+                let rendersAfterLayout = PublishedRedrawCounter.count
+                #expect(rendersAfterLayout >= 1)
+
+                PublishedRedrawBridge.viewModel?.title = "updated"
+                RunLoop.main.run(until: Date().addingTimeInterval(0.25))
+
+                #expect(PublishedRedrawCounter.count > rendersAfterLayout)
+            }
+        }
+        #endif
+
+        @Test func 明示的に渡したインスタンスはコンテナを通さない() {
+            let manual = ObservableViewModel()
+            manual.title = "manual"
+
+            let wrapper = AutowiredObject(wrappedValue: manual)
+            #expect(wrapper.wrappedValue === manual)
+            #expect(wrapper.wrappedValue.title == "manual")
+        }
+
+        @Test func 明示インスタンスではprojectValueがBindingを提供する() {
+            let manual = ObservableViewModel()
+            let wrapper = AutowiredObject(wrappedValue: manual)
+
+            wrapper.projectedValue.title.wrappedValue = "changed"
+            #expect(manual.title == "changed")
+        }
+
+        @Test func applicationスコープはラッパー間で共有される() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+            DependencyResolver.shared.register(ObservableCounter.self, scope: .application) { _ in
+                ObservableCounter()
+            }
+
+            let first = AutowiredObject<ObservableCounter>().wrappedValue
+            let second = AutowiredObject<ObservableCounter>().wrappedValue
+            #expect(first === second)
+        }
+    }
+
+    #if canImport(Observation)
+    @Suite
+    struct ObservableViewModelGraphTests {
+
+        @Test func ObservationIgnored付きAutowiredでgraphが共有される() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            var repoFactoryCount = 0
+            DependencyResolver.shared.register(ViewGraphRepo.self, scope: .graph) { _ in
+                repoFactoryCount += 1
+                return ViewGraphRepo()
+            }
+            DependencyResolver.shared.register(ViewGraphUseCase.self, scope: .graph) { _ in
+                ViewGraphUseCase()
+            }
+
+            let vm = ObservationGraphUseCaseHolder()
+            let first = vm.useCase.repo
+            let second = vm.useCase.repo
+
+            #expect(first === second)
+            #expect(repoFactoryCount == 1)
+        }
+    }
+    #endif
+}
+
+// MARK: - SwiftUI ラッパーテスト用の型
+
+#if canImport(SwiftUI)
+private enum RepoHolderRenderCapture {
+    static var repos: [ViewGraphRepo] = []
+}
+
+private struct RepoHolderRenderView: View {
+    @AutowiredObject var holder: ObservableRepoHolder
+
+    var body: some View {
+        Color.clear
+            .frame(width: 1, height: 1)
+            .onAppear {
+                RepoHolderRenderCapture.repos.append(holder.repo)
+            }
+    }
+}
+
+private enum DiamondGraphRenderCapture {
+    static var repoA: ViewGraphRepo?
+    static var repoB: ViewGraphRepo?
+
+    static func reset() {
+        repoA = nil
+        repoB = nil
+    }
+}
+
+private struct DiamondGraphRenderView: View {
+    @AutowiredObject var viewModel: ObservableDiamondViewModel
+
+    var body: some View {
+        Color.clear
+            .frame(width: 1, height: 1)
+            .onAppear {
+                DiamondGraphRenderCapture.repoA = viewModel.useCaseA.repo
+                DiamondGraphRenderCapture.repoB = viewModel.useCaseB.repo
+            }
+    }
+}
+
+private enum PublishedRedrawCounter {
+    static var count = 0
+}
+
+private enum PublishedRedrawBridge {
+    static weak var viewModel: ObservableViewModel?
+}
+
+private struct PublishedRedrawView: View {
+    @AutowiredObject var viewModel: ObservableViewModel
+
+    var body: some View {
+        PublishedRedrawCounter.count += 1
+        PublishedRedrawBridge.viewModel = viewModel
+        return Text(viewModel.title)
+    }
+}
+
+#endif
+
+#if canImport(Observation)
+@available(macOS 14.0, iOS 17.0, tvOS 17.0, *)
+@Observable
+private final class ObservationGraphUseCaseHolder {
+    @ObservationIgnored @Autowired var useCase: ViewGraphUseCase
+}
+#endif
+
+private final class ViewGraphRepo: AnyObject {
+    let id = UUID()
+}
+
+private final class ViewGraphUseCase: AnyObject {
+    @Autowired var repo: ViewGraphRepo
+}
+
+private final class ObservableViewModel: ObservableObject {
+    @Published var title = "default"
+    @Autowired var useCase: ViewGraphUseCase
+}
+
+private final class ObservableDiamondViewModel: ObservableObject {
+    @Autowired var useCaseA: ViewGraphUseCase
+    @Autowired var useCaseB: ViewGraphUseCase
+}
+
+private final class ObservableRepoHolder: ObservableObject {
+    @Autowired var repo: ViewGraphRepo
+}
+
+private final class ObservableCounter: ObservableObject {
+    @Published var count = 0
 }
 
 /// NavigationStack 上の1画面相当（前画面も pop せず保持される想定）
@@ -1385,6 +2003,27 @@ private final class BugSharedLeaf: AnyObject {
 private final class BugMultiAutowiredOwner {
     @Autowired var left: BugSharedLeaf
     @Autowired var right: BugSharedLeaf
+}
+
+private final class ExplicitSessionLeaf: AnyObject {
+    let id = UUID()
+}
+
+private final class ExplicitSessionHolderA {
+    @Autowired var leaf: ExplicitSessionLeaf
+}
+
+private final class ExplicitSessionHolderB {
+    @Autowired var leaf: ExplicitSessionLeaf
+}
+
+private final class ExplicitSessionPair {
+    let left: ExplicitSessionLeaf
+    let right: ExplicitSessionLeaf
+    init(left: ExplicitSessionLeaf, right: ExplicitSessionLeaf) {
+        self.left = left
+        self.right = right
+    }
 }
 
 // MARK: - テスト用型

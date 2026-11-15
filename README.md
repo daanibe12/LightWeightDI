@@ -3,7 +3,6 @@
 ![macOS](https://img.shields.io/badge/macOS-13+-green)
 ![iOS](https://img.shields.io/badge/iOS-14+-red)
 ![tvOS](https://img.shields.io/badge/tvOS-16+-blue)
-![CocoaPods](https://img.shields.io/badge/CocoaPods-0.6.5-blue)
 [![Swift Package Manager](https://img.shields.io/badge/Swift%20Package%20Manager-compatible-brightgreen.svg)](https://github.com/apple/swift-package-manager)
 
 A small, self-contained dependency injection library for Swift on Apple platforms. No third-party runtime dependencies.
@@ -12,19 +11,24 @@ A small, self-contained dependency injection library for Swift on Apple platform
 
 - **`DependencyResolver`** — register and resolve dependencies by type
 - **`@Autowired`** — property-wrapper injection with lazy resolution on first access
+- **`@AutowiredObject`** — SwiftUI injection for `ObservableObject` view models
 - **Three scopes** — `.weak` (default), `.application`, and `.graph`
 - **Nested resolution** — factories receive the resolver so dependencies chain through the same container
-- **Thread-safe** — internal `NSRecursiveLock` around container state
+- **Thread-safe** — internal `NSRecursiveLock` around container state; graph sessions are passed down the call stack, so concurrent resolves never borrow each other's tree
 - **Graph scope** — deduplicates instances within one object tree (UseCase / Repository diamonds), isolated per owning root so navigation stacks do not collide
 
 ## Releases
 
-### 0.6.5
+### 0.6.7
 
-- **Fix:** `.graph` caches are keyed by owner identity, not type name alone
-- Separate screens / holders no longer share UseCase or Repository instances while both stay alive (e.g. `NavigationStack`)
-- Within one owner tree, diamond dependencies still resolve to a single instance
-- Regression tests for stacked-screen isolation
+Ships all changes since the last tag **0.6.0** (there was no **0.6.5** release).
+
+- **New:** `@AutowiredObject` — inject an `ObservableObject` view model into a SwiftUI `View`
+- **Fix:** `.graph` is keyed by owner identity (`GraphKey`: type + tree ID), so separate screens / holders do not share UseCase or Repository while both stay alive (`NavigationStack`, and similar); diamonds inside one owner still deduplicate
+- **Fix:** registrations and caches use `ObjectIdentifier(type)`, so two types with the same name in different modules no longer collide
+- **Fix:** graph sessions are no longer held on the resolver as a shared stack; background resolves no longer join another screen's tree
+- **Fix:** `endGraphSession()` with no matching `startGraphSession()` is ignored instead of trapping
+- **Breaking:** CocoaPods removed — SPM only (pin **0.6.0** if you must stay on CocoaPods)
 
 ### 0.6.0
 
@@ -41,7 +45,7 @@ A small, self-contained dependency injection library for Swift on Apple platform
 
 ## Installation
 
-### Swift Package Manager
+LightWeightDI is distributed through Swift Package Manager.
 
 **Xcode:** File → Add Package Dependencies → enter the repository URL.
 
@@ -49,7 +53,7 @@ A small, self-contained dependency injection library for Swift on Apple platform
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.6.5")
+    .package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.6.7")
 ],
 targets: [
     .target(
@@ -59,15 +63,7 @@ targets: [
 ]
 ```
 
-### CocoaPods
-
-```ruby
-use_frameworks!
-
-target 'YourApp' do
-  pod 'LightWeightDI', '0.6.5'
-end
-```
+> **CocoaPods is not supported as of 0.6.7.** Use Swift Package Manager.
 
 ## Quick start
 
@@ -311,11 +307,93 @@ let otherService = other.service
 
 | Layer | Suggestion |
 |-------|------------|
-| View / ViewController / SwiftUI view | `@Autowired` is fine |
-| ViewModel / UseCase / Repository | Prefer initializer injection for easier unit tests |
-| App entry | Register everything on `DependencyResolver.shared` |
+| ViewController / ViewModel / UseCase | `@Autowired` is fine |
+| SwiftUI `View` | `@AutowiredObject` (see below) |
+| Testable core logic | Prefer initializer injection |
 
 `@Autowired` implies a shared resolution root (like most property-wrapper DI). For testable core logic, pass dependencies through `init` and keep the container at the composition root.
+
+## SwiftUI
+
+`@Autowired` cannot be used on a `View`. A `View` is a struct, and its property wrapper would need a `mutating` getter, which the non-mutating `body` cannot call. Use `@AutowiredObject` instead:
+
+```swift
+import SwiftUI
+import LightWeightDI
+
+final class ProfileViewModel: ObservableObject {
+    @Published private(set) var users: [User] = []
+    @Autowired var useCase: ProfileUseCase      // class owner: @Autowired works
+}
+
+struct ProfileView: View {
+    @AutowiredObject var viewModel: ProfileViewModel
+
+    var body: some View {
+        List(viewModel.users) { Text($0.name) }
+            .task { await viewModel.load() }
+    }
+}
+```
+
+- Resolves from **`DependencyResolver.shared`** once per view identity, via `@StateObject`
+- The view **owns** the instance, so it lives as long as the view
+- Subscribes to `objectWillChange`, so `@Published` changes redraw the body
+- `$viewModel.title` gives a `Binding`
+- Works with `.weak` scope: resolution happens once, so a transient registration is enough
+
+> **Sharing a view model with child views** is a distribution problem, not a DI problem. Create one instance at the root and pass it down with `.environmentObject` / `.environment`; `@AutowiredObject` gives each view its own instance.
+
+> **Note:** `StateObject` evaluates its autoclosure when SwiftUI renders, not when the wrapper is constructed. Reading `wrappedValue` outside a rendered view (unit tests, plain functions) therefore does not get the memoization a view does. Test the resolved value and the `projectedValue` type, not instance identity.
+
+Pass an explicit instance when you want to bypass the container (previews, tests):
+
+```swift
+#Preview {
+    ProfileView(viewModel: ProfileViewModel())
+}
+```
+
+### `@Observable` (iOS 17+)
+
+`@AutowiredObject` requires `ObservableObject`. If the view model uses the Observation framework, mark the injected property:
+
+```swift
+@Observable
+final class ProfileViewModel {
+    @ObservationIgnored @Autowired var useCase: ProfileUseCase
+    var users: [User] = []
+}
+```
+
+`@Observable` turns every stored property into a tracked one, which conflicts with the property wrapper. `@ObservationIgnored` opts it out. This is required by Observation itself, not by this library — Factory's `@Injected` has the same requirement.
+
+For the view, resolve in `init` and store in `@State` (do **not** use `@State private var vm = resolve()` as a default; that re-runs whenever the parent recreates the struct):
+
+```swift
+struct ProfileView: View {
+    @State private var viewModel: ProfileViewModel
+
+    init() {
+        _viewModel = State(
+            initialValue: DependencyResolver.shared.resolve(ProfileViewModel.self)
+        )
+    }
+
+    var body: some View {
+        List(viewModel.users) { Text($0.name) }
+    }
+}
+```
+
+### Which wrapper to use
+
+| Situation | Use |
+|-----------|-----|
+| UIKit `ViewController`, `ViewModel`, `UseCase` | `@Autowired` |
+| SwiftUI `View` + `ObservableObject` view model | `@AutowiredObject` |
+| SwiftUI `View` + `@Observable` view model | `init` + `@State`, or pass `viewModel` from the parent |
+| Plain `struct` (not a view) | Initializer injection |
 
 ## Manual resolve
 
@@ -369,6 +447,8 @@ The package includes a Swift Testing suite under `Tests/LightWeightDITests`. Run
 swift test
 ```
 
+Note that `@Autowired` and `@AutowiredObject` both resolve from `DependencyResolver.shared`, so tests that use them must reset the shared container. Tests touching `shared` run serialized to avoid cross-suite interference.
+
 ## API reference
 
 | API | Description |
@@ -381,6 +461,7 @@ swift test
 | `graphIdentity(for:)` | Stable graph ID for a class owner |
 | `initialize()` | Clear registrations and all caches |
 | `@Autowired` | Lazy property injection from `shared` |
+| `@AutowiredObject` | SwiftUI injection for `ObservableObject` view models |
 
 ## Comparison with heavier DI frameworks
 
@@ -389,7 +470,8 @@ LightWeightDI intentionally stays minimal:
 - No storyboard integration
 - No auto-wiring / reflection
 - No child containers or assembly types
-- Small API surface: register, resolve, three scopes, one property wrapper
+- No Swift macros, so there is no `swift-syntax` dependency and no Xcode "Trust & Enable" prompt
+- Small API surface: register, resolve, three scopes, property wrappers for UIKit and SwiftUI
 
 If you need feature-rich container hierarchies, consider [Swinject](https://github.com/Swinject/Swinject) or [Factory](https://github.com/hmlongco/Factory). LightWeightDI targets projects that want a few hundred lines of DI without pulling in a larger framework.
 
