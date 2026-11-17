@@ -219,13 +219,31 @@ public final class DependencyResolver {
 @propertyWrapper
 public struct Autowired<Service> {
     fileprivate var cachedValue: Service?
+    private let resolver: DependencyResolver
+
+    /// 0.5 / 0.6.x compatible — always `DependencyResolver.shared`.
+    public init() {
+        resolver = .shared
+    }
+
+    public init(resolver: DependencyResolver) {
+        self.resolver = resolver
+    }
+
+    public init<Scope: DIResolverScope>(_: Scope.Type) {
+        resolver = Scope.shared
+    }
+
+    public init(_ scope: KeyPath<DIRoots, DependencyResolver>) {
+        resolver = DIRoots.current[keyPath: scope]
+    }
 
     /// Fallback for value-type owners (no `_enclosingInstance`).
     public var wrappedValue: Service {
         mutating get {
             if let cached = cachedValue { return cached }
 
-            let resolved = DependencyResolver.shared.resolve(Service.self)
+            let resolved = resolver.resolve(Service.self)
             cachedValue = resolved
             return resolved
         }
@@ -241,21 +259,19 @@ public struct Autowired<Service> {
         storage storageKeyPath: ReferenceWritableKeyPath<EnclosingSelf, Autowired<Service>>
     ) -> Service {
         get {
-            if let cached = object[keyPath: storageKeyPath].cachedValue {
-                return cached
-            }
+            let storage = object[keyPath: storageKeyPath]
+            if let cached = storage.cachedValue { return cached }
 
+            let resolver = storage.resolver
             let graphID = DependencyResolver.graphIdentity(for: object)
 
-            // Bind only this thread to the owner's tree, then restore. No resolver
-            // state is mutated, so parallel screens cannot observe each other.
             let resolved = GraphContext.withGraph(graphID) {
-                DependencyResolver.shared.resolve(Service.self)
+                resolver.resolve(Service.self)
             }
 
-            var storage = object[keyPath: storageKeyPath]
-            storage.cachedValue = resolved
-            object[keyPath: storageKeyPath] = storage
+            var mutable = storage
+            mutable.cachedValue = resolved
+            object[keyPath: storageKeyPath] = mutable
             return resolved
         }
         set {
@@ -264,6 +280,4 @@ public struct Autowired<Service> {
             object[keyPath: storageKeyPath] = storage
         }
     }
-
-    public init() {}
 }
