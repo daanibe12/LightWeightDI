@@ -15,9 +15,18 @@ A small, self-contained dependency injection library for Swift on Apple platform
 - **Three scopes** — `.weak` (default), `.application`, and `.graph`
 - **Nested resolution** — factories receive the resolver so dependencies chain through the same container
 - **Thread-safe** — internal `NSRecursiveLock` around container state; graph sessions are passed down the call stack, so concurrent resolves never borrow each other's tree
-- **Graph scope** — deduplicates instances within one object tree (UseCase / Repository diamonds), isolated per owning root so navigation stacks do not collide
+- **Graph scope** — deduplicates instances within one object tree (UseCase / Repository diamonds), isolated by owning root so navigation stacks do not collide
+- **Business containers (0.6.8)** — optional separate `DependencyResolver` tables via `DIResolverScope`, `DIRoots`, and `@Autowired(\.app)` / app-defined `\.abc`
 
 ## Releases
+
+### 0.6.8
+
+- **Additive only** — unqualified `@Autowired` still uses `DependencyResolver.shared`
+- **New:** `DIResolverScope`, `DIRoots`, `@Autowired(Scope.self)`, `@Autowired(\.app)`, `init(resolver:)`
+- **KeyPath slots:** add `extension DIRoots { var abc: … }` in your app for `@Autowired(\.abc)` (no package `extension Autowired`)
+- **`ScopeType` vs `DIResolverScope`:** lifetime vs which resolver table
+- **`@AutowiredObject`:** still `DependencyResolver.shared` only
 
 ### 0.6.7
 
@@ -53,7 +62,7 @@ LightWeightDI is distributed through Swift Package Manager.
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.6.7")
+    .package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.6.8")
 ],
 targets: [
     .target(
@@ -128,6 +137,41 @@ resolver.register(AuthService.self, scope: .application) { r in
 ```
 
 `{ _ in Foo() }` works with both overloads; `{ Foo() }` uses the legacy `() -> Service` overload.
+
+### Business containers (0.6.8)
+
+Use a **separate `DependencyResolver` per feature** when you want isolated registration tables. This is **`DIResolverScope`**, not `ScopeType`.
+
+```swift
+enum AbcDI: DIResolverScope {
+    static let shared = DependencyResolver()
+}
+
+enum AppDI: DIResolverScope {
+    static let shared: DependencyResolver = .shared
+}
+
+extension DIRoots {
+    /// Your feature slot — name it anything (`abc` is just an example).
+    var abc: DependencyResolver { AbcDI.shared }
+}
+
+func bootstrap() {
+    DIRoots.current = DIRoots(app: AppDI.shared)
+    DependencyResolver.shared.register(GlobalService.self, scope: .application) { _ in GlobalService() }
+    AbcDI.shared.register(SomeUseCase.self, scope: .graph) { _ in DefaultSomeUseCase() }
+}
+
+final class FeatureViewModel {
+    @Autowired var global: GlobalService
+    @Autowired(\.abc) var useCase: SomeUseCase
+    @Autowired(AbcDI.self) var useCaseAlt: SomeUseCase  // same table when `abc` → AbcDI.shared
+}
+```
+
+- `@Autowired(\.abc)` compiles in the module that defines `extension DIRoots`.
+- No `extension Autowired` in your app is required.
+- `.application` caches are **per resolver**; `initialize()` clears **one table at a time**.
 
 ### When to use `(DependencyResolver) -> Service`
 

@@ -27,6 +27,9 @@ import SwiftUI
 /// > not when the wrapper is constructed. Code that only reads `wrappedValue`
 /// > outside a view (unit tests, plain functions) therefore bypasses the
 /// > memoization that a rendered view gets.
+///
+/// > Note: **0.6.8** — resolution still uses `DependencyResolver.shared` only.
+/// > Scoped resolvers (`DIResolverScope`, `@Autowired(\.app)`) are not supported here yet.
 @propertyWrapper
 public struct AutowiredObject<ObjectType: ObservableObject>: DynamicProperty {
     @StateObject private var dependency: ObjectType

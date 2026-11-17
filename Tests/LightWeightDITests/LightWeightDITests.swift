@@ -1,6 +1,15 @@
 import Testing
 @testable import LightWeightDI
 import Foundation
+
+// Simulates app module: `extension DIRoots { var abc: … }`
+private enum TestAbcDI: DIResolverScope {
+    static let shared = DependencyResolver()
+}
+
+extension DIRoots {
+    var abc: DependencyResolver { TestAbcDI.shared }
+}
 #if canImport(SwiftUI)
 import SwiftUI
 #endif
@@ -702,6 +711,148 @@ struct DependencyResolverSharedIsolationTests {
             #expect(useCaseAgain.repository === viaUseCase)
             #expect(useCaseFactoryCount.count == 1)
             #expect(repositoryFactoryCount.count == 1)
+        }
+    }
+
+    // MARK: - 0.6.8 業務コンテナ
+
+    @Suite
+    struct ScopedContainer068Tests {
+
+        private enum AbcDI: DIResolverScope {
+            static let shared = DependencyResolver()
+        }
+
+        private enum OtherDI: DIResolverScope {
+            static let shared = DependencyResolver()
+        }
+
+        private final class ScopeLabeledService: AnyObject {
+            let label: String
+            init(label: String) { self.label = label }
+        }
+
+        private struct SharedDefaultHolder {
+            @Autowired var service: ScopeLabeledService
+        }
+
+        private struct ScopeTypeHolder {
+            @Autowired(AbcDI.self) var service: ScopeLabeledService
+        }
+
+        private struct AppKeyPathHolder {
+            @Autowired(\.app) var service: ScopeLabeledService
+        }
+
+        private struct AbcKeyPathHolder {
+            @Autowired(\.abc) var service: ScopeLabeledService
+        }
+
+        @Test func 無印AutowiredはDependencyResolverSharedから解決する() {
+            resetSharedResolver()
+            defer {
+                resetSharedResolver()
+                DIRoots.current = DIRoots(app: .shared)
+            }
+            AbcDI.shared.initialize()
+            defer { AbcDI.shared.initialize() }
+
+            DependencyResolver.shared.register(ScopeLabeledService.self, scope: .weak) { _ in
+                ScopeLabeledService(label: "shared")
+            }
+            AbcDI.shared.register(ScopeLabeledService.self, scope: .weak) { _ in
+                ScopeLabeledService(label: "abc")
+            }
+
+            var holder = SharedDefaultHolder()
+            #expect(holder.service.label == "shared")
+        }
+
+        @Test func initScopeTypeはそのResolver表だけを見る() {
+            AbcDI.shared.initialize()
+            defer { AbcDI.shared.initialize() }
+
+            AbcDI.shared.register(ScopeLabeledService.self, scope: .weak) { _ in
+                ScopeLabeledService(label: "onlyAbc")
+            }
+
+            var holder = ScopeTypeHolder()
+            #expect(holder.service.label == "onlyAbc")
+        }
+
+        @Test func DIRootsのappKeyPathはshared表から解決する() {
+            resetSharedResolver()
+            defer {
+                resetSharedResolver()
+                DIRoots.current = DIRoots(app: .shared)
+            }
+            DIRoots.current = DIRoots(app: .shared)
+
+            DependencyResolver.shared.register(ScopeLabeledService.self, scope: .weak) { _ in
+                ScopeLabeledService(label: "via-app-kp")
+            }
+
+            var holder = AppKeyPathHolder()
+            #expect(holder.service.label == "via-app-kp")
+        }
+
+        @Test func 二つのResolverに別factoryなら別インスタンス() {
+            AbcDI.shared.initialize()
+            OtherDI.shared.initialize()
+            defer {
+                AbcDI.shared.initialize()
+                OtherDI.shared.initialize()
+            }
+
+            final class DualResolverService: AnyObject {
+                let token: UUID
+                init(token: UUID) { self.token = token }
+            }
+
+            let tokenA = UUID()
+            let tokenB = UUID()
+            AbcDI.shared.register(DualResolverService.self, scope: .application) { _ in
+                DualResolverService(token: tokenA)
+            }
+            OtherDI.shared.register(DualResolverService.self, scope: .application) { _ in
+                DualResolverService(token: tokenB)
+            }
+
+            let a = AbcDI.shared.resolve(DualResolverService.self)
+            let b = OtherDI.shared.resolve(DualResolverService.self)
+
+            #expect(a.token == tokenA)
+            #expect(b.token == tokenB)
+            #expect(a !== b)
+        }
+
+        @Test func extensionDIRootsのabcKeyPathがコンパイルされ解決できる() {
+            TestAbcDI.shared.initialize()
+            defer { TestAbcDI.shared.initialize() }
+
+            TestAbcDI.shared.register(ScopeLabeledService.self, scope: .weak) { _ in
+                ScopeLabeledService(label: "via-abc-kp")
+            }
+
+            var holder = AbcKeyPathHolder()
+            #expect(holder.service.label == "via-abc-kp")
+        }
+
+        @Test func ScopeTypeとabcKeyPathが同一shared参照なら同等() {
+            TestAbcDI.shared.initialize()
+            defer { TestAbcDI.shared.initialize() }
+
+            TestAbcDI.shared.register(ScopeLabeledService.self, scope: .application) { _ in
+                ScopeLabeledService(label: "same-table")
+            }
+
+            final class DualRouteHolder: AnyObject {
+                @Autowired(TestAbcDI.self) var viaScope: ScopeLabeledService
+                @Autowired(\.abc) var viaKeyPath: ScopeLabeledService
+            }
+
+            let holder = DualRouteHolder()
+            #expect(holder.viaScope === holder.viaKeyPath)
         }
     }
 
