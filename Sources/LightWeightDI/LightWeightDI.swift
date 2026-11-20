@@ -234,10 +234,6 @@ public struct Autowired<Service> {
         resolver = Scope.shared
     }
 
-    public init(_ scope: KeyPath<DIRoots, DependencyResolver>) {
-        resolver = DIRoots.current[keyPath: scope]
-    }
-
     /// Fallback for value-type owners (no `_enclosingInstance`).
     public var wrappedValue: Service {
         mutating get {
