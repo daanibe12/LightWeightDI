@@ -23,6 +23,11 @@ If you only use `DependencyResolver.shared` and unlabeled `@Autowired`, **no cod
 - `init(resolver:)` for tests
 - `@AutowiredObject` → `shared` only
 
+## Behavior (0.6.9)
+
+- **`DependencyResolver.initialize()`** waits until in-flight **`resolve`** calls finish before clearing registrations and caches. This reduces crashes when another thread calls `initialize()` while a factory or nested `resolve` is still running on the same container.
+- Does **not** replace host-app test discipline: parallel XCTest classes that all call `initialize()` on **`DependencyResolver.shared`** can still race after clears complete. Prefer `DependencyResolver()` / `DIResolverScope`, avoid tearDown `restore` on `shared`, or isolate heavy DI tests in the test plan.
+
 ## Installation
 
 ```swift

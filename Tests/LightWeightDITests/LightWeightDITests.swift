@@ -275,6 +275,67 @@ struct ConcurrencyTests {
         #expect(counter.value == 10)
         #expect(Set(ids).count == 10)
     }
+
+    @Test func initializeは進行中resolveの完了を待ってから登録を消す() {
+        final class SlowApplicationService: AnyObject {
+            let id = UUID()
+        }
+
+        let resolver = DependencyResolver()
+        let factoryEntered = LockedCounter()
+        let factoryFinished = LockedCounter()
+
+        resolver.register(SlowApplicationService.self, scope: .application) { _ in
+            factoryEntered.increment()
+            Thread.sleep(forTimeInterval: 0.05)
+            factoryFinished.increment()
+            return SlowApplicationService()
+        }
+
+        let group = DispatchGroup()
+        group.enter()
+        DispatchQueue.global().async {
+            _ = resolver.resolve(SlowApplicationService.self)
+            group.leave()
+        }
+
+        while factoryEntered.value == 0 {
+            Thread.sleep(forTimeInterval: 0.001)
+        }
+
+        resolver.initialize()
+
+        #expect(factoryFinished.value == 1)
+        group.wait()
+    }
+
+    @Test func 並列initializeとresolveで未登録fatalにならない() async {
+        let resolver = DependencyResolver()
+        let callCount = LockedCounter()
+
+        resolver.register(GreeterRepository.self, scope: .application) { _ in
+            callCount.increment()
+            Thread.sleep(forTimeInterval: 0.002)
+            return GreeterRepository()
+        }
+
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<8 {
+                group.addTask {
+                    _ = resolver.resolve(GreeterRepository.self)
+                }
+            }
+            for _ in 0..<4 {
+                group.addTask {
+                    resolver.initialize()
+                    resolver.register(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
+                }
+            }
+            for await _ in group {}
+        }
+
+        #expect(callCount.value >= 1)
+    }
 }
 
 private final class LockedCounter: @unchecked Sendable {
@@ -1950,6 +2011,106 @@ struct DependencyResolverSharedIsolationTests {
         }
     }
     #endif
+
+    // MARK: - GooCo CI 並列 (Master + PatientSearch shared)
+
+    @Suite
+    struct GooCoMasterParallelStressTests {
+
+        private final class SlowRemoteService: AnyObject {
+            let id = UUID()
+        }
+
+        private final class HomeMasterUseCase: AnyObject {
+            @Autowired var remote: SlowRemoteService
+        }
+
+        private final class PatientRepository: AnyObject {
+            @Autowired var remote: SlowRemoteService
+        }
+
+        private func homeInstall() {
+            resetSharedResolver()
+            DependencyResolver.shared.register(SlowRemoteService.self, scope: .weak) { _ in
+                Thread.sleep(forTimeInterval: 0.03)
+                return SlowRemoteService()
+            }
+            DependencyResolver.shared.register(HomeMasterUseCase.self, scope: .weak) { _ in
+                HomeMasterUseCase()
+            }
+        }
+
+        private func patientSearchSetUp() {
+            resetSharedResolver()
+            DependencyResolver.shared.register(SlowRemoteService.self, scope: .weak) { _ in
+                SlowRemoteService()
+            }
+            DependencyResolver.shared.register(PatientRepository.self, scope: .weak) { _ in
+                PatientRepository()
+            }
+        }
+
+        private func patientSearchTearDownRestore() {
+            resetSharedResolver()
+            DependencyResolver.shared.register(SlowRemoteService.self, scope: .application) { _ in
+                SlowRemoteService()
+            }
+            DependencyResolver.shared.register(PatientRepository.self, scope: .weak) { _ in
+                PatientRepository()
+            }
+        }
+
+        @Test(.disabled("手動再現: restoreProduction 相当 + 並列 initialize"))
+        func 並列HomeMasterとPatientSearchRestoreで未登録fatalが再現する() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+            stressParallel(loops: 40, patientTearDownRestore: true)
+        }
+
+        @Test func MasterDIinstall後の並列AutowiredResolveはfatalにならない() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+            homeInstall()
+            let group = DispatchGroup()
+            for _ in 0 ..< 30 {
+                group.enter()
+                DispatchQueue.global().async {
+                    defer { group.leave() }
+                    for _ in 0 ..< 5 {
+                        let useCase = HomeMasterUseCase()
+                        _ = useCase.remote
+                    }
+                }
+            }
+            group.wait()
+        }
+
+        private func stressParallel(loops: Int, patientTearDownRestore: Bool) {
+            let group = DispatchGroup()
+            for _ in 0 ..< loops {
+                group.enter()
+                DispatchQueue.global().async {
+                    defer { group.leave() }
+                    self.homeInstall()
+                    for _ in 0 ..< 3 {
+                        let useCase = HomeMasterUseCase()
+                        _ = useCase.remote
+                    }
+                }
+                group.enter()
+                DispatchQueue.global().async {
+                    defer { group.leave() }
+                    self.patientSearchSetUp()
+                    let repo = PatientRepository()
+                    _ = repo.remote
+                    if patientTearDownRestore {
+                        self.patientSearchTearDownRestore()
+                    }
+                }
+            }
+            group.wait()
+        }
+    }
 }
 
 // MARK: - SwiftUI ラッパーテスト用の型
