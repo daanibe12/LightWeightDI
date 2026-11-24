@@ -14,11 +14,18 @@ A small, self-contained dependency injection library for Swift on Apple platform
 - **`@AutowiredObject`** — SwiftUI injection for `ObservableObject` view models
 - **Three scopes** — `.weak` (default), `.application`, and `.graph`
 - **Nested resolution** — factories receive the resolver so dependencies chain through the same container
-- **Thread-safe** — internal `NSRecursiveLock` around container state; graph sessions are passed down the call stack, so concurrent resolves never borrow each other's tree
+- **Thread-safe** — internal `NSRecursiveLock` around container state; graph sessions are passed down the call stack, so concurrent resolves never borrow each other's tree; **`initialize()` waits for in-flight `resolve` calls** before clearing (0.6.10+)
 - **Graph scope** — deduplicates instances within one object tree (UseCase / Repository diamonds), isolated by owning root so navigation stacks do not collide
 - **Business containers (0.6.8+)** — optional separate `DependencyResolver` tables via `DIResolverScope` and `@Autowired(HomeDI.self)`
 
 ## Releases
+
+### 0.6.10
+
+- **Fix:** `DependencyResolver.initialize()` waits until in-flight `resolve` work finishes (`trackInflightResolve` + `waitUntilNoInflightResolves`) before clearing registrations and caches on that container
+- **Release:** merges `feature/add_conduct_load` — pin **`from: "0.6.10"`** instead of the branch
+- **Unchanged:** unqualified `@Autowired`, `DIResolverScope`, `init(resolver:)`, `@AutowiredObject`
+- **Note:** parallel tests that all call `initialize()` on `DependencyResolver.shared` still need host-app discipline (`DependencyResolver()` / `DIResolverScope`, register once / no tearDown restore on `shared`, or non-parallel test classes). See [RELEASE_NOTES_0.6.10.md](RELEASE_NOTES_0.6.10.md).
 
 ### 0.6.9
 
@@ -70,7 +77,7 @@ LightWeightDI is distributed through Swift Package Manager.
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.6.9")
+    .package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.6.10")
 ],
 targets: [
     .target(
@@ -452,11 +459,19 @@ Use this for one-off construction or when you need a new instance every time wit
 DependencyResolver.shared.initialize()
 ```
 
-Removes all registrations and caches. Useful for test teardown or resetting preview/demo state.
+Removes all registrations and caches after any in-flight `resolve` on this container completes (0.6.10+). Useful for test teardown or resetting preview/demo state.
 
 ## Testing
 
-Create a **separate** resolver for tests so production registrations are untouched:
+LightWeightDI is meant to be tested **in parallel** like any other library. `resolve` on a single container is thread-safe; failures in parallel CI almost always come from **one process-wide singleton** (`DependencyResolver.shared`) being `initialize()`d or re-registered while another test is still using it — that is a test-harness choice, not missing locks inside the container.
+
+**Recommended (parallel-safe)**
+
+| Pattern | When |
+|---------|------|
+| `DependencyResolver()` + `resolve` / `init(resolver:)` | Most unit tests |
+| `enum FeatureDI: DIResolverScope` + `@Autowired(FeatureDI.self)` | Feature code; reset `FeatureDI.shared` per test, not global `shared` |
+| `@Autowired(resolver: testResolver)` on the SUT | Exercising `@Autowired` without touching `shared` |
 
 ```swift
 let testResolver = DependencyResolver()
@@ -467,7 +482,9 @@ testResolver.register(UserRepositoryProtocol.self, scope: .application) { _ in
 let sut = ProfileViewModel(repository: testResolver.resolve(UserRepositoryProtocol.self))
 ```
 
-For code that uses `@Autowired` (bound to `shared`), reset in `setUp` / `tearDown`:
+**Global `shared` (serialize or isolate in the host app)**
+
+Unqualified `@Autowired` and default `@AutowiredObject` use `DependencyResolver.shared`. If the SUT cannot take an explicit resolver, reset `shared` in `setUp` / `tearDown` **and** turn off parallel execution for those test classes (XCTest test plan / scheme) or use one Swift Testing `@Suite(.serialized)` block.
 
 ```swift
 func setUp() {
@@ -482,13 +499,11 @@ func tearDown() {
 }
 ```
 
-The package includes a Swift Testing suite under `Tests/LightWeightDITests`. Run:
+The package tests follow the same split: scope/graph/concurrency suites use **local** resolvers and run in parallel; one small `@Suite(.serialized)` block only covers unqualified `@Autowired` on `shared` (production default wiring).
 
 ```bash
 swift test
 ```
-
-Note that `@Autowired` and `@AutowiredObject` both resolve from `DependencyResolver.shared`, so tests that use them must reset the shared container. Tests touching `shared` run serialized to avoid cross-suite interference.
 
 ## API reference
 

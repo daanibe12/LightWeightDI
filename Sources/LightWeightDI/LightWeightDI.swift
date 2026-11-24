@@ -70,6 +70,9 @@ enum GraphContext {
 public final class DependencyResolver {
     public static let shared = DependencyResolver()
     internal let lock = NSRecursiveLock()
+    /// `initialize()` waits until these reach zero so another thread does not clear mid-`resolve`.
+    private let inflightLock = NSLock()
+    private var inflightResolves = 0
     private var registrations = [ObjectIdentifier: DIRegistration]()
 
     private var containerCache = [ObjectIdentifier: Any]()
@@ -87,12 +90,35 @@ public final class DependencyResolver {
     }
 
     public func initialize() {
+        waitUntilNoInflightResolves()
         lock.lock(); defer { lock.unlock() }
         registrations.removeAll()
         containerCache.removeAll()
         weakGraphCache.removeAll()
         activeGraphCache.removeAll()
         activeSessions.removeAll()
+    }
+
+    private func waitUntilNoInflightResolves() {
+        while true {
+            inflightLock.lock()
+            let busy = inflightResolves > 0
+            inflightLock.unlock()
+            guard busy else { return }
+            Thread.sleep(forTimeInterval: 0.000_5)
+        }
+    }
+
+    private func trackInflightResolve<T>(_ body: () -> T) -> T {
+        inflightLock.lock()
+        inflightResolves += 1
+        inflightLock.unlock()
+        defer {
+            inflightLock.lock()
+            inflightResolves -= 1
+            inflightLock.unlock()
+        }
+        return body()
     }
 
     public func register<Service>(_ type: Service.Type, scope: ScopeType = .weak, factory: @escaping () -> Service) {
@@ -128,13 +154,15 @@ public final class DependencyResolver {
     }
 
     public func resolve<Service>(_ type: Service.Type) -> Service {
-        let session = openSession()
-        defer { closeSession(session) }
+        trackInflightResolve {
+            let session = openSession()
+            defer { closeSession(session) }
 
-        // Keep the tree visible to factories on this thread so a nested
-        // `r.resolve` inside a factory rejoins the same session.
-        return GraphContext.withGraph(session.graphID) {
-            performResolve(type, session: session)
+            // Keep the tree visible to factories on this thread so a nested
+            // `r.resolve` inside a factory rejoins the same session.
+            return GraphContext.withGraph(session.graphID) {
+                performResolve(type, session: session)
+            }
         }
     }
 
