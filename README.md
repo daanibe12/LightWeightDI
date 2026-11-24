@@ -14,18 +14,23 @@ A small, self-contained dependency injection library for Swift on Apple platform
 - **`@AutowiredObject`** — SwiftUI injection for `ObservableObject` view models
 - **Three scopes** — `.weak` (default), `.application`, and `.graph`
 - **Nested resolution** — factories receive the resolver so dependencies chain through the same container
-- **Thread-safe** — internal `NSRecursiveLock` around container state; graph sessions are passed down the call stack, so concurrent resolves never borrow each other's tree; **`initialize()` waits for in-flight `resolve` calls** before clearing (0.6.9+)
+- **Thread-safe** — internal `NSRecursiveLock` around container state; graph sessions are passed down the call stack, so concurrent resolves never borrow each other's tree; **`initialize()` waits for in-flight `resolve` calls** before clearing (0.6.10+)
 - **Graph scope** — deduplicates instances within one object tree (UseCase / Repository diamonds), isolated by owning root so navigation stacks do not collide
 - **Business containers (0.6.8+)** — optional separate `DependencyResolver` tables via `DIResolverScope` and `@Autowired(HomeDI.self)`
 
 ## Releases
 
+### 0.6.10
+
+- **Fix:** `DependencyResolver.initialize()` waits until in-flight `resolve` work finishes (`trackInflightResolve` + `waitUntilNoInflightResolves`) before clearing registrations and caches on that container
+- **Release:** merges `feature/add_conduct_load` — pin **`from: "0.6.10"`** instead of the branch
+- **Unchanged:** unqualified `@Autowired`, `DIResolverScope`, `init(resolver:)`, `@AutowiredObject`
+- **Note:** parallel tests that all call `initialize()` on `DependencyResolver.shared` still need host-app discipline (`DependencyResolver()` / `DIResolverScope`, register once / no tearDown restore on `shared`, or non-parallel test classes). See [RELEASE_NOTES_0.6.10.md](RELEASE_NOTES_0.6.10.md).
+
 ### 0.6.9
 
 - **Removed:** `DIRoots` and `@Autowired(\.app)` / KeyPath injection (use `@Autowired(HomeDI.self)` instead)
-- **Fix:** `DependencyResolver.initialize()` waits until active `resolve` work finishes, so another thread is less likely to clear registrations mid-factory or mid-resolve on the same container
 - **Unchanged:** unqualified `@Autowired`, `DIResolverScope`, `init(resolver:)`
-- **Note:** parallel tests that all call `initialize()` on `DependencyResolver.shared` still need host-app discipline (`DependencyResolver()` / `DIResolverScope`, no tearDown restore on `shared`, or non-parallel test classes)
 
 ### 0.6.8
 
@@ -72,7 +77,7 @@ LightWeightDI is distributed through Swift Package Manager.
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.6.9")
+    .package(url: "https://github.com/daanibe12/LightWeightDI.git", from: "0.6.10")
 ],
 targets: [
     .target(
@@ -454,7 +459,7 @@ Use this for one-off construction or when you need a new instance every time wit
 DependencyResolver.shared.initialize()
 ```
 
-Removes all registrations and caches. Useful for test teardown or resetting preview/demo state.
+Removes all registrations and caches after any in-flight `resolve` on this container completes (0.6.10+). Useful for test teardown or resetting preview/demo state.
 
 ## Testing
 

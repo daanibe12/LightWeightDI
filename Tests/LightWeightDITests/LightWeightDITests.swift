@@ -238,8 +238,8 @@ struct ConcurrencyTests {
             return GreeterRepository()
         }
 
-        let ids = await withTaskGroup(of: UUID.self) { group in
-            for _ in 0..<20 {
+        let ids =         await withTaskGroup(of: UUID.self) { group in
+            for _ in 0..<32 {
                 group.addTask {
                     resolver.resolve(GreeterRepository.self).id
                 }
@@ -261,8 +261,8 @@ struct ConcurrencyTests {
             return GreeterRepository()
         }
 
-        let ids = await withTaskGroup(of: UUID.self) { group in
-            for _ in 0..<10 {
+        let ids =         await withTaskGroup(of: UUID.self) { group in
+            for _ in 0..<24 {
                 group.addTask {
                     resolver.resolve(GreeterRepository.self).id
                 }
@@ -272,8 +272,8 @@ struct ConcurrencyTests {
             return collected
         }
 
-        #expect(counter.value == 10)
-        #expect(Set(ids).count == 10)
+        #expect(counter.value == 24)
+        #expect(Set(ids).count == 24)
     }
 
     @Test func initializeは進行中resolveの完了を待ってから登録を消す() {
@@ -320,12 +320,12 @@ struct ConcurrencyTests {
         }
 
         await withTaskGroup(of: Void.self) { group in
-            for _ in 0..<8 {
+            for _ in 0..<24 {
                 group.addTask {
                     _ = resolver.resolve(GreeterRepository.self)
                 }
             }
-            for _ in 0..<4 {
+            for _ in 0..<12 {
                 group.addTask {
                     resolver.initialize()
                     resolver.register(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
@@ -335,6 +335,58 @@ struct ConcurrencyTests {
         }
 
         #expect(callCount.value >= 1)
+    }
+}
+
+// MARK: - 並列（ローカル container・テストケース間も並列実行可）
+
+struct ParallelLocalResolverStressTests {
+
+    @Test func 多数コンテナをTaskGroupで並列登録解決する() async {
+        await withTaskGroup(of: Int.self) { group in
+            for index in 0 ..< 48 {
+                group.addTask {
+                    let resolver = DependencyResolver()
+                    resolver.register(GreeterRepository.self, scope: .weak) { _ in GreeterRepository() }
+                    var sum = 0
+                    for _ in 0 ..< 10 {
+                        _ = resolver.resolve(GreeterRepository.self)
+                        sum += 1
+                    }
+                    return sum
+                }
+            }
+            var totals = 0
+            for await count in group { totals += count }
+            #expect(totals == 48 * 10)
+        }
+    }
+
+    @Test func 並列initializeとresolveを複数コンテナで同時に行う() async {
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0 ..< 24 {
+                group.addTask {
+                    let resolver = DependencyResolver()
+                    resolver.register(GreeterRepository.self, scope: .application) { _ in
+                        Thread.sleep(forTimeInterval: 0.003)
+                        return GreeterRepository()
+                    }
+                    await withTaskGroup(of: Void.self) { inner in
+                        for _ in 0 ..< 12 {
+                            inner.addTask { _ = resolver.resolve(GreeterRepository.self) }
+                        }
+                        for _ in 0 ..< 6 {
+                            inner.addTask {
+                                resolver.initialize()
+                                resolver.register(GreeterRepository.self, scope: .application) { _ in GreeterRepository() }
+                            }
+                        }
+                        for await _ in inner {}
+                    }
+                }
+            }
+            for await _ in group {}
+        }
     }
 }
 
@@ -2012,10 +2064,10 @@ struct DependencyResolverSharedIsolationTests {
     }
     #endif
 
-    // MARK: - GooCo CI 並列 (Master + PatientSearch shared)
+    // MARK: - ホスト並列ストレス（ケース内マルチスレッド・GooCo CI 再現）
 
     @Suite
-    struct GooCoMasterParallelStressTests {
+    struct SharedHostParallelStressTests {
 
         private final class SlowRemoteService: AnyObject {
             let id = UUID()
@@ -2029,10 +2081,14 @@ struct DependencyResolverSharedIsolationTests {
             @Autowired var remote: SlowRemoteService
         }
 
+        private final class LoginWCFRepository: AnyObject {
+            @Autowired var remote: SlowRemoteService
+        }
+
         private func homeInstall() {
             resetSharedResolver()
             DependencyResolver.shared.register(SlowRemoteService.self, scope: .weak) { _ in
-                Thread.sleep(forTimeInterval: 0.03)
+                Thread.sleep(forTimeInterval: 0.04)
                 return SlowRemoteService()
             }
             DependencyResolver.shared.register(HomeMasterUseCase.self, scope: .weak) { _ in
@@ -2050,6 +2106,16 @@ struct DependencyResolverSharedIsolationTests {
             }
         }
 
+        private func loginSetUp() {
+            resetSharedResolver()
+            DependencyResolver.shared.register(SlowRemoteService.self, scope: .weak) { _ in
+                SlowRemoteService()
+            }
+            DependencyResolver.shared.register(LoginWCFRepository.self, scope: .weak) { _ in
+                LoginWCFRepository()
+            }
+        }
+
         private func patientSearchTearDownRestore() {
             resetSharedResolver()
             DependencyResolver.shared.register(SlowRemoteService.self, scope: .application) { _ in
@@ -2060,11 +2126,21 @@ struct DependencyResolverSharedIsolationTests {
             }
         }
 
-        @Test(.disabled("手動再現: restoreProduction 相当 + 並列 initialize"))
-        func 並列HomeMasterとPatientSearchRestoreで未登録fatalが再現する() {
+        private func installGooCoLikeHomePatientLogin() {
             resetSharedResolver()
-            defer { resetSharedResolver() }
-            stressParallel(loops: 40, patientTearDownRestore: true)
+            DependencyResolver.shared.register(SlowRemoteService.self, scope: .weak) { _ in
+                Thread.sleep(forTimeInterval: 0.04)
+                return SlowRemoteService()
+            }
+            DependencyResolver.shared.register(HomeMasterUseCase.self, scope: .weak) { _ in
+                HomeMasterUseCase()
+            }
+            DependencyResolver.shared.register(PatientRepository.self, scope: .weak) { _ in
+                PatientRepository()
+            }
+            DependencyResolver.shared.register(LoginWCFRepository.self, scope: .weak) { _ in
+                LoginWCFRepository()
+            }
         }
 
         @Test func MasterDIinstall後の並列AutowiredResolveはfatalにならない() {
@@ -2072,11 +2148,11 @@ struct DependencyResolverSharedIsolationTests {
             defer { resetSharedResolver() }
             homeInstall()
             let group = DispatchGroup()
-            for _ in 0 ..< 30 {
+            for _ in 0 ..< 64 {
                 group.enter()
                 DispatchQueue.global().async {
                     defer { group.leave() }
-                    for _ in 0 ..< 5 {
+                    for _ in 0 ..< 12 {
                         let useCase = HomeMasterUseCase()
                         _ = useCase.remote
                     }
@@ -2085,7 +2161,116 @@ struct DependencyResolverSharedIsolationTests {
             group.wait()
         }
 
-        private func stressParallel(loops: Int, patientTearDownRestore: Bool) {
+        /// 1 回 install 後は GooCo と同様に tearDown restore なしで並列 `@Autowired` 解決
+        @Test func 単一install後にHomePatientLoginを並列Autowired解決してfatalにならない() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+            installGooCoLikeHomePatientLogin()
+            let group = DispatchGroup()
+            for _ in 0 ..< 96 {
+                group.enter()
+                DispatchQueue.global().async {
+                    defer { group.leave() }
+                    for _ in 0 ..< 6 {
+                        _ = HomeMasterUseCase().remote
+                        _ = PatientRepository().remote
+                        _ = LoginWCFRepository().remote
+                    }
+                }
+            }
+            group.wait()
+        }
+
+        @Test func 遅いfactoryを64スレッドで連続resolveしてfatalにならない() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+            installGooCoLikeHomePatientLogin()
+            let completed = LockedCounter()
+            let group = DispatchGroup()
+            for _ in 0 ..< 64 {
+                group.enter()
+                DispatchQueue.global().async {
+                    defer { group.leave() }
+                    for _ in 0 ..< 16 {
+                        _ = HomeMasterUseCase().remote
+                    }
+                    completed.increment()
+                }
+            }
+            group.wait()
+            #expect(completed.value == 64)
+        }
+
+        @Test func sharedで並列initializeとresolveでfatalにならない() async {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            let callCount = LockedCounter()
+            DependencyResolver.shared.register(GreeterRepository.self, scope: .application) { _ in
+                callCount.increment()
+                Thread.sleep(forTimeInterval: 0.005)
+                return GreeterRepository()
+            }
+
+            await withTaskGroup(of: Void.self) { group in
+                for _ in 0 ..< 48 {
+                    group.addTask { _ = DependencyResolver.shared.resolve(GreeterRepository.self) }
+                }
+                for _ in 0 ..< 24 {
+                    group.addTask {
+                        DependencyResolver.shared.initialize()
+                        DependencyResolver.shared.register(GreeterRepository.self, scope: .application) { _ in
+                            GreeterRepository()
+                        }
+                    }
+                }
+                for await _ in group {}
+            }
+
+            #expect(callCount.value >= 1)
+        }
+
+        @Test(.disabled("手動: 重い resolve 中に他スレッド setUp — 単一プロセスでは競合しうる"))
+        func 重いresolve中に別スレッドがsetUp相当する() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+
+            DependencyResolver.shared.register(SlowRemoteService.self, scope: .weak) { _ in
+                Thread.sleep(forTimeInterval: 0.08)
+                return SlowRemoteService()
+            }
+            DependencyResolver.shared.register(HomeMasterUseCase.self, scope: .weak) { _ in
+                HomeMasterUseCase()
+            }
+
+            let group = DispatchGroup()
+            for _ in 0 ..< 20 {
+                group.enter()
+                DispatchQueue.global().async {
+                    defer { group.leave() }
+                    let useCase = HomeMasterUseCase()
+                    _ = useCase.remote
+                }
+            }
+            for _ in 0 ..< 20 {
+                group.enter()
+                DispatchQueue.global().async {
+                    defer { group.leave() }
+                    self.patientSearchSetUp()
+                    _ = PatientRepository().remote
+                }
+            }
+            group.wait()
+        }
+
+        @Test(.disabled("手動再現: 同時 setUp + tearDown restore 相当"))
+        func 並列HomePatientRestoreで未登録fatalが再現する() {
+            resetSharedResolver()
+            defer { resetSharedResolver() }
+            stressThreeClassParallel(loops: 40, patientTearDownRestore: true)
+        }
+
+        private func stressThreeClassParallel(loops: Int, patientTearDownRestore: Bool) {
             let group = DispatchGroup()
             for _ in 0 ..< loops {
                 group.enter()
@@ -2101,11 +2286,16 @@ struct DependencyResolverSharedIsolationTests {
                 DispatchQueue.global().async {
                     defer { group.leave() }
                     self.patientSearchSetUp()
-                    let repo = PatientRepository()
-                    _ = repo.remote
+                    _ = PatientRepository().remote
                     if patientTearDownRestore {
                         self.patientSearchTearDownRestore()
                     }
+                }
+                group.enter()
+                DispatchQueue.global().async {
+                    defer { group.leave() }
+                    self.loginSetUp()
+                    _ = LoginWCFRepository().remote
                 }
             }
             group.wait()
